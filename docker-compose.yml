@@ -1,0 +1,40 @@
+# One command brings up postgres + the app.
+#   docker compose up --build
+# App lands on http://localhost:8080
+services:
+  db:
+    image: postgres:17-alpine
+    container_name: game-renting-db
+    environment:
+      POSTGRES_DB: game_renting
+      POSTGRES_USER: keni
+      POSTGRES_PASSWORD: keni
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      # the app waits for this, otherwise it boots before postgres
+      # is ready to accept connections and dies on the first request
+      test: ["CMD-SHELL", "pg_isready -U keni -d game_renting"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  app:
+    build: .
+    container_name: game-renting-app
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      # jdbc url uses the service name, not localhost, because inside
+      # the compose network the db is reachable as "db"
+      SPRING_DATASOURCE_URL: jdbc:postgresql://db:5432/game_renting
+      SPRING_DATASOURCE_USERNAME: keni
+      SPRING_DATASOURCE_PASSWORD: keni
+    ports:
+      - "8080:8080"
+
+volumes:
+  postgres-data:

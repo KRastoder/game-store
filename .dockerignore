@@ -1,0 +1,14 @@
+# keep the build context small and never let a stale host jar
+# overwrite the one built inside the image
+target/
+.git/
+.github/
+.idea/
+.vscode/
+.settings/
+.classpath
+.project
+*.iml
+*.md
+Dockerfile
+docker-compose.yml
