@@ -8,11 +8,13 @@ import org.springframework.data.jpa.repository.JpaRepository;
 
 public interface PaymentRepository extends JpaRepository<Payment, UUID> {
 
+  // Payment holds @ManyToOne relations, so Spring Data resolves userId to user.id
+  // and subscriptionId to subscription.id
   List<Payment> findByUserId(UUID userId);
 
-  List<Payment> findBySubId(UUID subId);
+  List<Payment> findBySubscriptionId(UUID subscriptionId);
 
-  List<Payment> findByUserIdAndSubId(UUID userId, UUID subId);
+  List<Payment> findByUserIdAndSubscriptionId(UUID userId, UUID subscriptionId);
 
   List<Payment> findByDatePaidBetween(Instant from, Instant to);
 }

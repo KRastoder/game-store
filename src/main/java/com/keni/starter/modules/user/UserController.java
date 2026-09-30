@@ -3,6 +3,7 @@ package com.keni.starter.modules.user;
 import java.util.List;
 import java.util.UUID;
 
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -27,6 +28,12 @@ public class UserController {
   @PostMapping
   public UserResponse createUser(@Valid @RequestBody NewUserRequest request) {
     return userService.createUser(request);
+  }
+
+  /** Taken from the security context, never from a request parameter. */
+  @GetMapping("/me")
+  public UserResponse getMe(@AuthenticationPrincipal User currentUser) {
+    return UserResponse.from(currentUser);
   }
 
   @GetMapping

@@ -32,6 +32,8 @@ public class UserService {
     var user = new User();
     user.setUserName(request.userName());
     user.setPassword(passwordEncoder.encode(request.password()));
+    // always USER. A role on the request body would let anyone self register as admin
+    user.setRole(Role.USER);
 
     return UserResponse.from(userRepository.save(user));
   }

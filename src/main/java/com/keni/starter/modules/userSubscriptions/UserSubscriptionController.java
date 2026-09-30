@@ -3,6 +3,7 @@ package com.keni.starter.modules.userSubscriptions;
 import java.util.List;
 import java.util.UUID;
 
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -10,6 +11,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import com.keni.starter.modules.user.User;
 import com.keni.starter.modules.userSubscriptions.dtos.NewUserSubscriptionRequest;
 import com.keni.starter.modules.userSubscriptions.dtos.UserSubscriptionResponse;
 
@@ -25,17 +27,33 @@ public class UserSubscriptionController {
   }
 
   @PostMapping
-  public UserSubscriptionResponse subscribe(@Valid @RequestBody NewUserSubscriptionRequest request) {
-    return userSubscriptionService.subscribe(request);
+  public UserSubscriptionResponse subscribe(@AuthenticationPrincipal User currentUser,
+      @Valid @RequestBody NewUserSubscriptionRequest request) {
+    return userSubscriptionService.subscribe(currentUser, request);
   }
 
+  @GetMapping("/me")
+  public List<UserSubscriptionResponse> getMySubscriptions(
+      @AuthenticationPrincipal User currentUser) {
+    return userSubscriptionService.getByUserId(currentUser.getId());
+  }
+
+  /** Admin only. This is the "who bought what" view. */
+  @GetMapping
+  public List<UserSubscriptionResponse> getAll() {
+    return userSubscriptionService.getAll();
+  }
+
+  /** Admin only. */
   @GetMapping("/user/{userId}")
   public List<UserSubscriptionResponse> getByUserId(@PathVariable UUID userId) {
     return userSubscriptionService.getByUserId(userId);
   }
 
+  /** Admin only. */
   @GetMapping("/subscription/{subscriptionId}")
-  public List<UserSubscriptionResponse> getBySubscriptionId(@PathVariable UUID subscriptionId) {
+  public List<UserSubscriptionResponse> getBySubscriptionId(
+      @PathVariable UUID subscriptionId) {
     return userSubscriptionService.getBySubscriptionId(subscriptionId);
   }
 }

@@ -10,50 +10,59 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
 import com.keni.starter.modules.subscriptions.SubscriptionRepository;
-import com.keni.starter.modules.user.UserRepository;
+import com.keni.starter.modules.user.User;
 import com.keni.starter.modules.userSubscriptions.dtos.NewUserSubscriptionRequest;
 import com.keni.starter.modules.userSubscriptions.dtos.UserSubscriptionResponse;
 
 @Service
 public class UserSubscriptionService {
   private final UserSubscriptionRepository userSubscriptionRepository;
-  private final UserRepository userRepository;
   private final SubscriptionRepository subscriptionRepository;
 
   public UserSubscriptionService(UserSubscriptionRepository userSubscriptionRepository,
-      UserRepository userRepository, SubscriptionRepository subscriptionRepository) {
+      SubscriptionRepository subscriptionRepository) {
     this.userSubscriptionRepository = userSubscriptionRepository;
-    this.userRepository = userRepository;
     this.subscriptionRepository = subscriptionRepository;
   }
 
+  /**
+   * The user is taken from the security context rather than the request body, otherwise
+   * anyone could subscribe somebody else.
+   */
   @Transactional
-  public UserSubscriptionResponse subscribe(NewUserSubscriptionRequest request) {
-    var user = userRepository.findById(request.userId())
-        .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "User not found"));
+  public UserSubscriptionResponse subscribe(User currentUser,
+      NewUserSubscriptionRequest request) {
     var subscription = subscriptionRepository.findById(request.subscriptionId()).orElseThrow(
         () -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Subscription not found"));
 
-    if (userSubscriptionRepository.existsByUserIdAndSubscriptionId(request.userId(),
+    if (userSubscriptionRepository.existsByUserIdAndSubscriptionId(currentUser.getId(),
         request.subscriptionId())) {
       throw new ResponseStatusException(HttpStatus.CONFLICT,
-          "User already has this subscription");
+          "You already have this subscription");
     }
 
     // Manual mapping xd
     var userSubscription = new UserSubscription();
-    userSubscription.setUser(user);
+    userSubscription.setUser(currentUser);
     userSubscription.setSubscription(subscription);
     userSubscription.setStartedAt(Instant.now());
 
     return UserSubscriptionResponse.from(userSubscriptionRepository.save(userSubscription));
   }
 
+  /** Scoped to the caller, the id never comes from the request. */
   public List<UserSubscriptionResponse> getByUserId(UUID userId) {
     return userSubscriptionRepository.findByUserId(userId).stream()
         .map(UserSubscriptionResponse::from).toList();
   }
 
+  /** Admin only, guarded by SecurityConfig. */
+  public List<UserSubscriptionResponse> getAll() {
+    return userSubscriptionRepository.findAll().stream().map(UserSubscriptionResponse::from)
+        .toList();
+  }
+
+  /** Admin only, who subscribed to this particular tier. */
   public List<UserSubscriptionResponse> getBySubscriptionId(UUID subscriptionId) {
     return userSubscriptionRepository.findBySubscriptionId(subscriptionId).stream()
         .map(UserSubscriptionResponse::from).toList();

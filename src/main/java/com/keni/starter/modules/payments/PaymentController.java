@@ -3,6 +3,7 @@ package com.keni.starter.modules.payments;
 import java.util.List;
 import java.util.UUID;
 
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -14,6 +15,7 @@ import org.springframework.web.bind.annotation.RestController;
 import com.keni.starter.modules.payments.dtos.CreateRequestPayment;
 import com.keni.starter.modules.payments.dtos.PaymentResponse;
 import com.keni.starter.modules.payments.dtos.UpdatePaymentStatusRequest;
+import com.keni.starter.modules.user.User;
 
 import jakarta.validation.Valid;
 
@@ -37,8 +39,13 @@ public class PaymentController {
     return paymentService.updateStatus(id, request);
   }
 
-  @GetMapping("/user/{userId}")
-  public List<PaymentResponse> getByUserId(@PathVariable UUID userId) {
-    return paymentService.getByUserId(userId);
+  @GetMapping("/me")
+  public List<PaymentResponse> getMyPayments(@AuthenticationPrincipal User currentUser) {
+    return paymentService.getPaymentsByUserId(currentUser.getId());
+  }
+
+  @GetMapping
+  public List<PaymentResponse> getAllPayments() {
+    return paymentService.getAllPayments();
   }
 }

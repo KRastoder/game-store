@@ -57,7 +57,13 @@ public class PaymentService {
     return PaymentResponse.from(payment);
   }
 
-  public List<PaymentResponse> getByUserId(UUID userId) {
+  /** Admin only, guarded by SecurityConfig. Shows every payment in the system. */
+  public List<PaymentResponse> getAllPayments() {
+    return paymentRepository.findAll().stream().map(PaymentResponse::from).toList();
+  }
+
+  /** Scoped to the caller, the id never comes from the request. */
+  public List<PaymentResponse> getPaymentsByUserId(UUID userId) {
     return paymentRepository.findByUserId(userId).stream().map(PaymentResponse::from).toList();
   }
 }

@@ -5,9 +5,8 @@ import java.util.UUID;
 import jakarta.validation.constraints.NotNull;
 
 /**
- * newUserSubscription
+ * subscribe the signed in user to a tier
  */
 public record NewUserSubscriptionRequest(
-    @NotNull UUID userId,
     @NotNull UUID subscriptionId) {
 }

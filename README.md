@@ -10,9 +10,11 @@ Spring code rather than tutorial-shaped Spring code.
 ## Features
 
 - Users register with a BCrypt-hashed password and can never read it back over the API
-- Subscription tiers with a price
+- Two roles, `ADMIN` and `USER`, with HTTP Basic authentication
+- Only admins create games, subscription tiers, catalogue entries, payments and see
+  who bought what
+- Users see their own payments and subscriptions and nobody else's
 - Subscription-to-game catalogue (many-to-many join entity)
-- User-to-subscription subscriptions with start and expiry timestamps
 - Payments recorded per user + subscription, with a status lifecycle
 - Request validation that returns `400` with the offending field, not a `500`
 
@@ -25,9 +27,10 @@ Spring code rather than tutorial-shaped Spring code.
 | Spring Web MVC | REST controllers |
 | Jackson 3 | `tools.jackson`, the Jackson 2 successor Spring Boot 4 ships |
 | Spring Data JPA | Hibernate 7 |
-| Spring Security | BCrypt, config-ready for JWT later |
+| Spring Security | HTTP Basic, BCrypt, role-based access |
 | Bean Validation | `jakarta.validation` on every request DTO |
 | Postgres | 17 |
+| H2 | test scope only, for the security tests |
 | Docker | multi-stage build, Compose for the whole stack |
 | Lombok | boilerplate reduction |
 
@@ -88,6 +91,75 @@ Or run it from your IDE — start `StarterApplication`. Connection settings live
 
 ---
 
+## Authentication and roles
+
+Authentication is HTTP Basic — send `Authorization: Basic base64(user:password)`.
+There are exactly two roles.
+
+Every new registration is forced to `USER`. The create-user request has **no role
+field at all**, and unknown JSON fields are rejected, so nobody can self-register
+as an admin.
+
+### Making the first admin
+
+Registration always produces a `USER`, so promote the first admin by hand:
+
+```bash
+docker compose exec db psql -U keni -d game_renting \
+  -c "UPDATE users SET role='ADMIN' WHERE user_name='keni';"
+```
+
+Restart is not needed. Sign in again with your existing password.
+
+### Who can do what
+
+| Endpoint | Anonymous | User | Admin |
+|---|:---:|:---:|:---:|
+| `POST /user` | yes | yes | yes |
+| `GET /user/me` | 401 | **own only** | own only |
+| `GET /user` | 401 | 403 | yes |
+| `GET /user/{id}` | 401 | 403 | yes |
+| `GET /subscription`, `GET /subscription/{id}` | 401 | yes | yes |
+| `POST /subscription` | 401 | 403 | yes |
+| `POST /game` | 401 | 403 | yes |
+| `POST /subscription-game` | 401 | 403 | yes |
+| `GET /subscription-game/**` | 401 | yes | yes |
+| `POST /user-subscription` | 401 | **subscribes self** | subscribes self |
+| `GET /user-subscription/me` | 401 | **own only** | own only |
+| `GET /user-subscription` | 401 | 403 | yes |
+| `GET /user-subscription/user/{userId}` | 401 | 403 | yes |
+| `GET /user-subscription/subscription/{id}` | 401 | 403 | yes |
+| `GET /payment/me` | 401 | **own only** | own only |
+| `GET /payment` | 401 | 403 | yes |
+| `POST /payment` | 401 | 403 | yes |
+| `PATCH /payment/{id}/status` | 401 | 403 | yes |
+
+Note the shape of the `/me` routes. There is no
+`GET /payment/user/{userId}` any more on purpose — putting a user id in a path
+variable and then checking it against the caller is how IDOR bugs happen.
+The id comes from the security context via `@AuthenticationPrincipal`, so
+there is nothing for a caller to tamper with.
+
+### Trying it out
+
+```bash
+# register, becomes a USER
+curl -X POST localhost:8080/user -H 'Content-Type: application/json' \
+  -d '{"userName":"keni","password":"supersecret"}'
+
+# refused: 403
+curl -i -u keni:supersecret -X POST localhost:8080/game \
+  -H 'Content-Type: application/json' \
+  -d '{"title":"Minecraft","description":"blocks","company":"Mojang"}'
+
+# allowed once promoted to ADMIN
+curl -u root:adminpassword -X POST localhost:8080/game \
+  -H 'Content-Type: application/json' \
+  -d '{"title":"Minecraft","description":"blocks","company":"Mojang"}'
+```
+
+---
+
 ## API
 
 All request bodies are JSON and validated. Unknown fields are rejected with a `400`,
@@ -98,8 +170,9 @@ so a client typo like `"userNam"` fails loudly instead of being silently dropped
 | Method | Path | Body | Returns |
 |---|---|---|---|
 | `POST` | `/user` | `{userName, password}` | `UserResponse` |
-| `GET` | `/user` | | `List<UserResponse>` |
-| `GET` | `/user/{id}` | | `UserResponse` |
+| `GET` | `/user/me` | | own `UserResponse` |
+| `GET` | `/user` | | `List<UserResponse>` — admin |
+| `GET` | `/user/{id}` | | `UserResponse` — admin |
 
 ### Subscriptions
 
@@ -119,9 +192,14 @@ so a client typo like `"userNam"` fails loudly instead of being silently dropped
 
 | Method | Path | Body | Returns |
 |---|---|---|---|
-| `POST` | `/user-subscription` | `{userId, subscriptionId}` | `UserSubscriptionResponse` |
-| `GET` | `/user-subscription/user/{userId}` | | `List<UserSubscriptionResponse>` |
-| `GET` | `/user-subscription/subscription/{subscriptionId}` | | `List<UserSubscriptionResponse>` |
+| `POST` | `/user-subscription` | `{subscriptionId}` | own `UserSubscriptionResponse` |
+| `GET` | `/user-subscription/me` | | own `List<UserSubscriptionResponse>` |
+| `GET` | `/user-subscription` | | `List<UserSubscriptionResponse>` — admin, who bought what |
+| `GET` | `/user-subscription/user/{userId}` | | admin |
+| `GET` | `/user-subscription/subscription/{subscriptionId}` | | admin |
+
+The subscribe body has no `userId`. The subscriber is always the authenticated
+caller, so nobody can subscribe someone else.
 
 ### Adding games to a subscription
 
@@ -135,9 +213,10 @@ so a client typo like `"userNam"` fails loudly instead of being silently dropped
 
 | Method | Path | Body | Returns |
 |---|---|---|---|
-| `POST` | `/payment` | `{userId, subId, datePaid, amount}` | `PaymentResponse` |
-| `PATCH` | `/payment/{id}/status` | `{status}` | `PaymentResponse` |
-| `GET` | `/payment/user/{userId}` | | `List<PaymentResponse>` |
+| `POST` | `/payment` | `{userId, subId, datePaid, amount}` | `PaymentResponse` — admin |
+| `PATCH` | `/payment/{id}/status` | `{status}` | `PaymentResponse` — admin |
+| `GET` | `/payment/me` | | own `List<PaymentResponse>` |
+| `GET` | `/payment` | | `List<PaymentResponse>` — admin, every payment |
 
 `status` is one of `PENDING`, `COMPLETED`, `FAILED`, `REFUNDED`. New payments are
 always created as `PENDING` — the client cannot set it, otherwise anyone could mark
@@ -205,19 +284,54 @@ instead of `"userName"` gets a success response and a silently broken account.
 `spring.jackson.deserialization.fail-on-unknown-properties=true` turns that into
 a `400`.
 
+**Own data is identified from the token, not from the request.** The first cut of
+this API had `GET /payment/user/{userId}` and `GET /user-subscription/user/{userId}`,
+and any signed in user could swap in someone else's id. Accepting an identifier
+from the client and then comparing it to the caller is exactly how IDOR bugs get
+shipped. Both routes are now `/me`, and the id is read off the
+`@AuthenticationPrincipal`, so there is no attacker-controlled input to check.
+
+**Registration cannot grant itself a role.** `NewUserRequest` has no role field,
+`UserService` hardcodes `Role.USER`, and unknown JSON fields are rejected — so
+posting `"role":"ADMIN"` is a `400`, not a silent privilege escalation.
+
+**Role rules live in `SecurityConfig`, ordered most specific first.** Request
+matchers are evaluated top to bottom and the first hit wins, so every `/me` rule
+has to be declared above the `/something/*` wildcard that would otherwise swallow
+it. That ordering bug is exactly what the security tests guard against.
+
+**The access rules are tested, not assumed.** `SecurityAccessTest` drives every
+rule in the table above through MockMvc as three different people — anonymous, a
+normal user, and an admin — using real BCrypt hashes through the real
+`UserDetailsService`. It runs on H2, so `./mvnw test` needs no database.
+
 **Passwords are BCrypt-hashed at rest.** `SecurityConfig` exposes a
 `PasswordEncoder` bean; `UserService` encodes on the way in and the hash is never
 readable through the API.
+
+## Tests
+
+```bash
+./mvnw test
+```
+
+29 tests, no database required — `src/test/resources/application.properties` points
+at an in-memory H2 so it shadows the Postgres config.
+
+`SecurityAccessTest` covers the whole access matrix: every rule is checked from all
+three angles (no credentials, a normal user, an admin), plus the privilege
+escalation attempts — registering with `"role":"ADMIN"`, and trying to subscribe
+another user.
 
 ## Not done yet
 
 Honest list of what is missing, roughly in priority order:
 
-- **No tests.** The single biggest gap. Worth `@DataJpaTest` for repositories and
-  `@WebMvcTest` for controllers.
-- **Authentication is disabled.** `SecurityConfig` permits all requests; auth is
-  a deliberate later step (JWT), not an oversight.
+- **HTTP Basic, not tokens.** Every call resends credentials and browsers cache them
+  for the whole realm. JWT is the real answer for a SPA or mobile client.
 - **`ddl-auto=update` instead of Flyway migrations.**
+- **The first admin has to be promoted by hand** with a SQL update. A seed user or a
+  `CommandLineRunner` bootstrap would be cleaner.
 - **No pagination.** Every list endpoint returns everything.
 - **No global exception handler.** Services throw `ResponseStatusException`, which
   works, but a `@RestControllerAdvice` returning `ProblemDetail` would be better.
@@ -226,6 +340,8 @@ Honest list of what is missing, roughly in priority order:
 - **Payment status has no transition rules.** A payment can go straight from
   `PENDING` to `REFUNDED`.
 - **No CI.** A GitHub Actions workflow running the build on every push.
+- **Tests cover access control and validation, not business logic.** No repository
+  tests and no service unit tests yet.
 
 ## Troubleshooting
 

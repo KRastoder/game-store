@@ -6,10 +6,13 @@ import java.util.UUID;
 
 import org.jspecify.annotations.Nullable;
 import org.springframework.security.core.GrantedAuthority;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.userdetails.UserDetails;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
@@ -35,9 +38,17 @@ public class User implements UserDetails {
   @Column(name = "password", nullable = false)
   private String password;
 
+  @Enumerated(EnumType.STRING)
+  @Column(name = "role", nullable = false)
+  private Role role;
+
   @Override
   public Collection<? extends GrantedAuthority> getAuthorities() {
-    return List.of();
+    if (role == null) {
+      return List.of();
+    }
+    // Spring Security maps hasRole("ADMIN") to the authority "ROLE_ADMIN"
+    return List.of(new SimpleGrantedAuthority("ROLE_" + role.name()));
   }
 
   @Override
