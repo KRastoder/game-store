@@ -7,6 +7,7 @@ import java.util.UUID;
 import com.keni.starter.modules.subscriptions.Subscription;
 import com.keni.starter.modules.user.User;
 
+import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.FetchType;
 import jakarta.persistence.GeneratedValue;
@@ -40,6 +41,7 @@ public class UserSubscription {
   @JoinColumn(name = "subscription_id")
   private Subscription subscription;
 
+  @Column(name = "started_at", nullable = false)
   private Instant startedAt;
   private Instant expiresAt;
 }

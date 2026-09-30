@@ -1,8 +1,10 @@
 
 package com.keni.starter.modules.subscriptions;
 
+import java.math.BigDecimal;
 import java.util.UUID;
 
+import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
@@ -23,7 +25,11 @@ public class Subscription {
   @Id
   @GeneratedValue(strategy = GenerationType.UUID)
   private UUID id;
+
+  @Column(name = "name", nullable = false, unique = true)
   private String name;
-  private int price;
+
+  @Column(name = "price", nullable = false)
+  private BigDecimal price;
 
 }

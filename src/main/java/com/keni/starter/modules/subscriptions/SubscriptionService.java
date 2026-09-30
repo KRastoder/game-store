@@ -1,0 +1,45 @@
+package com.keni.starter.modules.subscriptions;
+
+import java.util.List;
+import java.util.UUID;
+
+import org.springframework.http.HttpStatus;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.server.ResponseStatusException;
+
+import com.keni.starter.modules.subscriptions.dtos.NewSubscriptionRequest;
+import com.keni.starter.modules.subscriptions.dtos.SubscriptionResponse;
+
+@Service
+public class SubscriptionService {
+  private final SubscriptionRepository subscriptionRepository;
+
+  public SubscriptionService(SubscriptionRepository subscriptionRepository) {
+    this.subscriptionRepository = subscriptionRepository;
+  }
+
+  @Transactional
+  public SubscriptionResponse createSubscription(NewSubscriptionRequest request) {
+    if (subscriptionRepository.existsByName(request.name())) {
+      throw new ResponseStatusException(HttpStatus.CONFLICT, "Subscription already exists");
+    }
+
+    // Manual mapping xd
+    var subscription = new Subscription();
+    subscription.setName(request.name());
+    subscription.setPrice(request.price());
+
+    return SubscriptionResponse.from(subscriptionRepository.save(subscription));
+  }
+
+  public List<SubscriptionResponse> getAllSubscriptions() {
+    return subscriptionRepository.findAll().stream().map(SubscriptionResponse::from).toList();
+  }
+
+  public SubscriptionResponse getSubscriptionById(UUID id) {
+    return subscriptionRepository.findById(id).map(SubscriptionResponse::from)
+        .orElseThrow(
+            () -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Subscription not found"));
+  }
+}

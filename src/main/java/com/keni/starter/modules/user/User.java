@@ -29,8 +29,10 @@ public class User implements UserDetails {
   @Id
   @GeneratedValue(strategy = GenerationType.UUID)
   private UUID id;
-  @Column(name = "user_name")
+  @Column(name = "user_name", nullable = false, unique = true)
   private String userName;
+
+  @Column(name = "password", nullable = false)
   private String password;
 
   @Override
