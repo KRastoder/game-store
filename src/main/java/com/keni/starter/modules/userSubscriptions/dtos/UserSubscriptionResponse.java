@@ -13,11 +13,14 @@ public record UserSubscriptionResponse(
     UUID userId,
     UUID subscriptionId,
     Instant startedAt,
-    Instant expiresAt) {
+    Instant expiresAt,
+    Instant cancelledAt,
+    boolean active) {
 
   public static UserSubscriptionResponse from(UserSubscription userSubscription) {
     return new UserSubscriptionResponse(userSubscription.getId(),
         userSubscription.getUser().getId(), userSubscription.getSubscription().getId(),
-        userSubscription.getStartedAt(), userSubscription.getExpiresAt());
+        userSubscription.getStartedAt(), userSubscription.getExpiresAt(),
+        userSubscription.getCancelledAt(), userSubscription.isActive());
   }
 }

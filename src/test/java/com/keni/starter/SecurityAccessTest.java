@@ -304,26 +304,6 @@ class SecurityAccessTest {
   }
 
   @Test
-  void lapsedSubscriptionStillBlocksResubscribeBecauseOfTheUniqueConstraint() throws Exception {
-    var keni = userRepository.findById(userId).orElseThrow();
-    var tier = subscriptionRepository.findById(subscriptionId).orElseThrow();
-
-    var lapsed = new com.keni.starter.modules.userSubscriptions.UserSubscription();
-    lapsed.setUser(keni);
-    lapsed.setSubscription(tier);
-    lapsed.setStartedAt(java.time.Instant.now().minus(java.time.Duration.ofDays(60)));
-    lapsed.setExpiresAt(java.time.Instant.now().minus(java.time.Duration.ofDays(30)));
-    userSubscriptionRepository.save(lapsed);
-
-    // The table has a unique constraint on (user_id, subscription_id), so one row per
-    // tier per user is permanent. Renewal is not supported yet.
-    mvc.perform(post("/user-subscription").with(httpBasic("keni", USER_PW))
-        .contentType(MediaType.APPLICATION_JSON)
-        .content(subscribeBody(userId, subscriptionId, "9.99")))
-        .andExpect(status().isConflict());
-  }
-
-  @Test
   void userCannotSubscribeSomebodyElse() throws Exception {
     mvc.perform(post("/user-subscription").with(httpBasic("keni", USER_PW))
         .contentType(MediaType.APPLICATION_JSON)
@@ -385,17 +365,31 @@ class SecurityAccessTest {
   }
 
   @Test
-  void renewalOfLapsedSubscriptionRestartsFromToday() throws Exception {
+  void renewalOfLapsedSubscriptionIsRejectedBecauseTheyMustResubscribe() throws Exception {
     var keni = userRepository.findById(userId).orElseThrow();
     var tier = subscriptionRepository.findById(subscriptionId).orElseThrow();
     userSubscriptionRepository.saveAndFlush(lapsedSubscription(keni, tier));
 
-    var now = java.time.Instant.now();
-    var result = renew(userId, subscriptionId, "9.99");
+    // renewing a dead subscription would silently skip the time already served, so it is
+    // refused and the caller is told to buy it again
+    assertThat(renewStatus("keni", subscriptionId, "9.99")).isEqualTo(409);
+  }
 
-    var after = result.userSubscription().expiresAt();
-    var added = java.time.Duration.between(now, after).toDays();
-    assertThat(added).isBetween(29L, 30L);
+  @Test
+  void lapsedSubscriptionCanBeBoughtAgainOnTheSameRow() throws Exception {
+    var keni = userRepository.findById(userId).orElseThrow();
+    var tier = subscriptionRepository.findById(subscriptionId).orElseThrow();
+    var lapsedRow = userSubscriptionRepository.saveAndFlush(lapsedSubscription(keni, tier));
+
+    subscribe(userId, subscriptionId, "9.99");
+
+    // reused rather than duplicated, because of the unique constraint
+    assertThat(userSubscriptionRepository.findByUserId(userId)).hasSize(1);
+    assertThat(mySubscription().isActive()).isTrue();
+    assertThat(mySubscription().getId()).isEqualTo(lapsedRow.getId());
+    // a fresh period measured from today
+    assertThat(java.time.Duration.between(java.time.Instant.now(),
+        mySubscription().getExpiresAt()).toDays()).isBetween(29L, 30L);
   }
 
   @Test
@@ -504,6 +498,74 @@ class SecurityAccessTest {
     lapsed.setStartedAt(java.time.Instant.now().minus(java.time.Duration.ofDays(60)));
     lapsed.setExpiresAt(java.time.Instant.now().minus(java.time.Duration.ofDays(30)));
     return lapsed;
+  }
+
+  // ---------------- refund ends access ----------------
+
+  /** PENDING -> COMPLETED -> REFUNDED, which is the only route a refund can take. */
+  private void completeAndRefund(UUID paymentId) throws Exception {
+    mvc.perform(patch("/payment/" + paymentId + "/status").with(httpBasic("root", ADMIN_PW))
+        .contentType(MediaType.APPLICATION_JSON).content("{\"status\":\"COMPLETED\"}"))
+        .andExpect(status().isOk());
+  }
+
+  @Test
+  void refundClosesTheSubscriptionAndStopsRenewal() throws Exception {
+    subscribe(userId, subscriptionId, "9.99");
+    var paymentId = firstPaymentId(userId);
+    completeAndRefund(paymentId);
+
+    mvc.perform(patch("/payment/" + paymentId + "/status").with(httpBasic("root", ADMIN_PW))
+        .contentType(MediaType.APPLICATION_JSON).content("{\"status\":\"REFUNDED\"}"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.status").value("REFUNDED"));
+
+    assertThat(mySubscription().getCancelledAt()).isNotNull();
+    assertThat(mySubscription().isActive()).isFalse();
+
+    // renewing a cancelled subscription makes no sense, they have to buy it again
+    assertThat(renewStatus("keni", subscriptionId, "9.99")).isEqualTo(409);
+  }
+
+  @Test
+  void refundedUserCanSubscribeAgain() throws Exception {
+    subscribe(userId, subscriptionId, "9.99");
+    var paymentId = firstPaymentId(userId);
+    completeAndRefund(paymentId);
+    mvc.perform(patch("/payment/" + paymentId + "/status").with(httpBasic("root", ADMIN_PW))
+        .contentType(MediaType.APPLICATION_JSON).content("{\"status\":\"REFUNDED\"}"))
+        .andExpect(status().isOk());
+
+    // the old fix would have made this a permanent 409
+    var paymentsBefore = paymentRepository
+        .findByUserIdAndSubscriptionId(userId, subscriptionId).size();
+    subscribe(userId, subscriptionId, "9.99");
+
+    assertThat(mySubscription().getCancelledAt()).isNull();
+    assertThat(mySubscription().isActive()).isTrue();
+    // revived on the same row, so still exactly one
+    assertThat(userSubscriptionRepository.findByUserId(userId)).hasSize(1);
+    // and the money really was taken again
+    assertThat(paymentRepository.findByUserIdAndSubscriptionId(userId, subscriptionId))
+        .hasSize(paymentsBefore + 1);
+  }
+
+  @Test
+  void userCannotRefundThemselves() throws Exception {
+    subscribe(userId, subscriptionId, "9.99");
+    var paymentId = firstPaymentId(userId);
+    completeAndRefund(paymentId);
+
+    mvc.perform(patch("/payment/" + paymentId + "/status").with(httpBasic("keni", USER_PW))
+        .contentType(MediaType.APPLICATION_JSON).content("{\"status\":\"REFUNDED\"}"))
+        .andExpect(status().isForbidden());
+    // refused, so access is untouched
+    assertThat(mySubscription().isActive()).isTrue();
+  }
+
+  private UUID firstPaymentId(UUID user) {
+    return paymentRepository.findByUserIdAndSubscriptionId(user, subscriptionId).stream()
+        .findFirst().orElseThrow().getId();
   }
 
   private String subscribeBody(UUID user, UUID subscription, String amount) {

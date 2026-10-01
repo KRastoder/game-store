@@ -44,4 +44,22 @@ public class UserSubscription {
   @Column(name = "started_at", nullable = false)
   private Instant startedAt;
   private Instant expiresAt;
+
+  /**
+   * Set when access is ended early, by a refund. Null while the subscription is live,
+   * which is why it has to be nullable rather than defaulting to some epoch date.
+   */
+  @Column(name = "cancelled_at")
+  private Instant cancelledAt;
+
+  /** Live means not cancelled and not yet past its expiry. */
+  public boolean isActive() {
+    return cancelledAt == null && expiresAt != null && expiresAt.isAfter(Instant.now());
+  }
+
+  public void cancel() {
+    if (cancelledAt == null) {
+      cancelledAt = Instant.now();
+    }
+  }
 }

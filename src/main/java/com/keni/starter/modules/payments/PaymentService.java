@@ -10,13 +10,17 @@ import org.springframework.web.server.ResponseStatusException;
 
 import com.keni.starter.modules.payments.dtos.PaymentResponse;
 import com.keni.starter.modules.payments.dtos.UpdatePaymentStatusRequest;
+import com.keni.starter.modules.userSubscriptions.UserSubscriptionRepository;
 
 @Service
 public class PaymentService {
   private final PaymentRepository paymentRepository;
+  private final UserSubscriptionRepository userSubscriptionRepository;
 
-  public PaymentService(PaymentRepository paymentRepository) {
+  public PaymentService(PaymentRepository paymentRepository,
+      UserSubscriptionRepository userSubscriptionRepository) {
     this.paymentRepository = paymentRepository;
+    this.userSubscriptionRepository = userSubscriptionRepository;
   }
 
   /**
@@ -37,7 +41,30 @@ public class PaymentService {
 
     payment.setStatus(request.status());
 
+    // Handing the money back has to take the access back with it. Without this the
+    // customer is refunded and keeps playing until the original expiry.
+    if (request.status() == PaymentStatus.REFUNDED) {
+      closeSubscriptionFor(payment);
+    }
+
     return PaymentResponse.from(payment);
+  }
+
+  /**
+   * Ends the subscription the refunded payment was for.
+   *
+   * <p>Partial refunds are not supported: refunding any payment for a tier closes that
+   * user's access to the tier entirely. That is the safe direction to be wrong in, and it
+   * is why refunds are the one transition that is deliberately not reversible.
+   */
+  private void closeSubscriptionFor(Payment payment) {
+    userSubscriptionRepository
+        .findByUserIdAndSubscriptionId(payment.getUser().getId(),
+            payment.getSubscription().getId())
+        .ifPresent(userSubscription -> {
+          userSubscription.cancel();
+          userSubscriptionRepository.save(userSubscription);
+        });
   }
 
   /** Admin only, guarded by SecurityConfig. Shows every payment in the system. */

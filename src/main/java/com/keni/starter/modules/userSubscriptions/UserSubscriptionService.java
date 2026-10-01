@@ -57,18 +57,29 @@ public class UserSubscriptionService {
           "Amount does not match the price of " + subscription.getName());
     }
 
-    if (userSubscriptionRepository.existsByUserIdAndSubscriptionId(request.userId(),
-        request.subscriptionId())) {
+    // locked read so two concurrent subscribes cannot both miss an existing row
+    var existing = userSubscriptionRepository.findForRenewal(request.userId(),
+        request.subscriptionId());
+
+    if (existing.isPresent() && existing.get().isActive()) {
       throw new ResponseStatusException(HttpStatus.CONFLICT,
-          "You already have a subscription to " + subscription.getName());
+          "You already have an active subscription to " + subscription.getName());
     }
 
     // Manual mapping xd
     var now = Instant.now();
-    var userSubscription = new UserSubscription();
+    // A cancelled or lapsed row is reused rather than inserted, because the table has a
+    // unique constraint on (user_id, subscription_id). Refusing here would mean a
+    // refunded user could never buy that tier again.
+    var userSubscription = existing.orElseGet(UserSubscription::new);
+    if (existing.isPresent()) {
+      // clearing the cancellation is what revives it
+      userSubscription.setCancelledAt(null);
+    } else {
+      userSubscription.setStartedAt(now);
+    }
     userSubscription.setUser(currentUser);
     userSubscription.setSubscription(subscription);
-    userSubscription.setStartedAt(now);
     userSubscription
         .setExpiresAt(now.plus(subscription.getDurationDays(), ChronoUnit.DAYS));
 
@@ -112,6 +123,11 @@ public class UserSubscriptionService {
         .findForRenewal(currentUser.getId(), request.subscriptionId())
         .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND,
             "You do not have a subscription to " + subscription.getName()));
+
+    if (!userSubscription.isActive()) {
+      throw new ResponseStatusException(HttpStatus.CONFLICT,
+          "That subscription has ended, subscribe again instead of renewing it");
+    }
 
     var now = Instant.now();
     var currentExpiry = userSubscription.getExpiresAt();

@@ -238,6 +238,100 @@ class ServiceRulesTest {
     assertThat(stored.getPassword()).startsWith("$2");
   }
 
+  // ---------------- refunding ends access ----------------
+
+  @Test
+  void refundingAPaymentEndsTheSubscription() {
+    var row = putUserOnTier();
+    assertThat(row.isActive()).isTrue();
+
+    paymentService.updateStatus(latestPaymentForTier().getId(),
+        new UpdatePaymentStatusRequest(PaymentStatus.REFUNDED));
+
+    var reloaded = userSubscriptionRepository.findById(row.getId()).orElseThrow();
+    assertThat(reloaded.getCancelledAt()).isNotNull();
+    assertThat(reloaded.isActive()).isFalse();
+  }
+
+  @Test
+  void refundLeavesOtherUsersSubscriptionsAlone() {
+    var mine = putUserOnTier();
+
+    var otherUser = new User();
+    otherUser.setUserName("victim");
+    otherUser.setPassword("hashed");
+    otherUser.setRole(Role.USER);
+    otherUser = userRepository.saveAndFlush(otherUser);
+
+    var theirs = new com.keni.starter.modules.userSubscriptions.UserSubscription();
+    theirs.setUser(otherUser);
+    theirs.setSubscription(tier);
+    theirs.setStartedAt(java.time.Instant.now());
+    theirs.setExpiresAt(java.time.Instant.now().plus(30, ChronoUnit.DAYS));
+    var theirRow = userSubscriptionRepository.saveAndFlush(theirs);
+
+    paymentService.updateStatus(latestPaymentForTier().getId(),
+        new UpdatePaymentStatusRequest(PaymentStatus.REFUNDED));
+
+    assertThat(userSubscriptionRepository.findById(theirRow.getId()).orElseThrow()
+        .getCancelledAt()).isNull();
+    assertThat(userSubscriptionRepository.findById(mine.getId()).orElseThrow().getCancelledAt())
+        .isNotNull();
+  }
+
+  @Test
+  void markingFailedDoesNotEndTheSubscription() {
+    var row = putUserOnTier();
+    // FAILED is only reachable from PENDING, so it needs its own unpaid payment
+    var pending = newPayment(PaymentStatus.PENDING);
+
+    paymentService.updateStatus(pending.getId(),
+        new UpdatePaymentStatusRequest(PaymentStatus.FAILED));
+
+    assertThat(userSubscriptionRepository.findById(row.getId()).orElseThrow().getCancelledAt())
+        .isNull();
+    assertThat(userSubscriptionRepository.findById(row.getId()).orElseThrow().isActive()).isTrue();
+  }
+
+  @Test
+  void expiredSubscriptionIsNotActive() {
+    var row = new com.keni.starter.modules.userSubscriptions.UserSubscription();
+    row.setUser(user);
+    row.setSubscription(tier);
+    row.setStartedAt(java.time.Instant.now().minus(java.time.Duration.ofDays(60)));
+    row.setExpiresAt(java.time.Instant.now().minus(java.time.Duration.ofDays(30)));
+    // expired but never cancelled, which is not the same thing
+    assertThat(row.isActive()).isFalse();
+    assertThat(row.getCancelledAt()).isNull();
+  }
+
+  @Test
+  void cancelIsIdempotent() {
+    var row = putUserOnTier();
+
+    row.cancel();
+    var first = row.getCancelledAt();
+    row.cancel();
+    assertThat(row.getCancelledAt()).isEqualTo(first);
+  }
+
+  private com.keni.starter.modules.userSubscriptions.UserSubscription putUserOnTier() {
+    var row = new com.keni.starter.modules.userSubscriptions.UserSubscription();
+    row.setUser(user);
+    row.setSubscription(tier);
+    row.setStartedAt(java.time.Instant.now());
+    row.setExpiresAt(java.time.Instant.now().plus(30, ChronoUnit.DAYS));
+    var saved = userSubscriptionRepository.saveAndFlush(row);
+    // the access has to be paid for, so a completed payment goes with it
+    newPayment(PaymentStatus.COMPLETED);
+    return saved;
+  }
+
+  private Payment latestPaymentForTier() {
+    return paymentRepository.findByUserIdAndSubscriptionId(user.getId(), tier.getId()).stream()
+        .findFirst().orElseThrow();
+  }
+
   private Payment newPayment(PaymentStatus status) {
     var payment = new Payment();
     payment.setUser(user);

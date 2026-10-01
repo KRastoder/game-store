@@ -264,7 +264,36 @@ is answerable from `payments` even though there is only ever one subscription ro
 |---|---|
 | no subscription to that tier | `404` |
 | `amount` differs from the tier price, either way | `400` |
+| subscription already ended | `409`, subscribe again instead |
 | valid | `200`, plus a new `COMPLETED` payment |
+
+### Refunds end access
+
+`PATCH /payment/{id}/status` with `REFUNDED` also cancels the subscription the
+payment was for. Money going back and access staying on were two separate facts
+that should never disagree.
+
+`user_subscriptions.cancelled_at` records when access was cut, which is different
+from `expires_at` — a cancelled subscription ended early, an expired one ran its
+course. `UserSubscriptionResponse` exposes `cancelledAt` and a computed `active`
+flag, so a client never has to work that out itself.
+
+```
+subscribe      active: true   cancelledAt: null
+refund         active: false  cancelledAt: 2026-10-01T01:06Z
+```
+
+Because the table has a unique constraint on `(user_id, subscription_id)`, a
+cancelled row is **revived in place** when the user buys the tier again rather than
+inserted anew. Without that, closing a subscription on refund would have made the
+tier permanently unpurchasable for that user — the fix would have become its own
+lockout.
+
+| Situation | Result |
+|---|---|
+| renewing a cancelled or expired subscription | `409`, buy it again |
+| subscribing to a tier you hold but which has ended | `200`, row revived, charged again |
+| subscribing to a tier you already hold and is active | `409` |
 
 ### Adding games to a subscription
 
@@ -278,7 +307,7 @@ is answerable from `payments` even though there is only ever one subscription ro
 
 | Method | Path | Body | Returns |
 |---|---|---|---|
-| `PATCH` | `/payment/{id}/status` | `{status}` | `PaymentResponse` — admin |
+| `PATCH` | `/payment/{id}/status` | `{status}` | `PaymentResponse` — admin. `REFUNDED` also ends the subscription |
 | `GET` | `/payment/me` | | own `List<PaymentResponse>` |
 | `GET` | `/payment` | | `List<PaymentResponse>` — admin, every payment |
 
@@ -360,6 +389,17 @@ from the client and then comparing it to the caller is exactly how IDOR bugs get
 shipped. Both routes are now `/me`, and the id is read off the
 `@AuthenticationPrincipal`, so there is no attacker-controlled input to check.
 
+**A refund takes the access with it.** Handing money back while leaving access on
+is a contradiction, so `PaymentService` cancels the subscription in the same
+transaction. Partial refunds are deliberately not supported — refunding any payment
+for a tier closes that user's access to it — because that is the safe direction to
+be wrong in, and it keeps `REFUNDED` the one irreversible transition.
+
+**Closing a subscription revives it rather than adding a row.** The unique
+constraint on `(user_id, subscription_id)` means one row per user per tier, so a
+cancelled row is reused on the next purchase. The alternative — refusing — would
+turn a refund into a permanent lockout of that tier for that user.
+
 **Renewal takes a row lock.** Renewal reads `expiresAt`, adds a period and writes it
 back. Without `PESSIMISTIC_WRITE` two concurrent renewals both read the same
 `expiresAt`, both add a period, and the second write discards the first — the
@@ -435,10 +475,9 @@ Honest list of what is missing, roughly in priority order:
 - **HTTP Basic, not tokens.** Every call resends credentials and browsers cache them
   for the whole realm. JWT is the real answer for a SPA or mobile client.
 - **`ddl-auto=update` instead of Flyway migrations.**
-- **Refunding a payment does not end the subscription.** A refunded user keeps access
-  until `expiresAt`, and renewal means there are now more payments to refund. A
-  `PATCH /user-subscription/{id}/cancel` that closes the subscription and refunds the
-  latest payment would close the loop.
+- **A user cannot cancel their own subscription.** Only an admin refund, or a
+  subscription running out, ends access. A `PATCH /user-subscription/{id}/cancel`
+  for the owner — close access, no refund — is the obvious next endpoint.
 - **The first admin has to be promoted by hand** with a SQL update. A seed user or a
   `CommandLineRunner` bootstrap would be cleaner.
 - **No pagination.** Every list endpoint returns everything.
