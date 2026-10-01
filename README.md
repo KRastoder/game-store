@@ -127,6 +127,7 @@ Restart is not needed. Sign in again with your existing password.
 | `GET /subscription-game/**` | 401 | yes | yes |
 | `POST` `/user-subscription` | 401 | **subscribes self + pays** | subscribes self |
 | `POST` `/user-subscription/renew` | 401 | **renews self + pays** | renews self |
+| `PATCH` `/user-subscription/{id}/cancel` | 401 | **own row, or 403** | any row |
 | `GET /user-subscription/me` | 401 | **own only** | own only |
 | `GET /user-subscription` | 401 | 403 | yes |
 | `GET /user-subscription/user/{userId}` | 401 | 403 | yes |
@@ -201,6 +202,7 @@ creates the subscription **and** its payment in one transaction.
 |---|---|---|---|
 | `POST` | `/user-subscription` | `{subscriptionId, userId, amount, datePaid}` | `SubscribeResponse` |
 | `POST` | `/user-subscription/renew` | `{subscriptionId, amount}` | `SubscribeResponse` |
+| `PATCH` | `/user-subscription/{id}/cancel` | none | `UserSubscriptionResponse` |
 | `GET` | `/user-subscription/me` | | own `List<UserSubscriptionResponse>` |
 | `GET` | `/user-subscription` | | `List<UserSubscriptionResponse>` — admin, who bought what |
 | `GET` | `/user-subscription/user/{userId}` | | admin |
@@ -295,6 +297,30 @@ lockout.
 | renewing a cancelled or expired subscription | `409`, buy it again |
 | subscribing to a tier you hold but which has ended | `200`, row revived, charged again |
 | subscribing to a tier you already hold and is active | `409` |
+
+### Cancelling
+
+`PATCH /user-subscription/{id}/cancel` ends access early. No request body — the row id
+in the path is the whole request.
+
+```bash
+curl -u mallory:supersecret -X PATCH localhost:8080/user-subscription/<id>/cancel
+```
+
+**Cancelling does not refund.** A customer walking away from a period they already paid
+for keeps their money; an admin handing money back goes through
+`PATCH /payment/{id}/status`, which cancels the row as well. Folding a refund into
+cancel would let any user void their own payments by cancelling.
+
+| Situation | Result |
+|---|---|
+| the row belongs to someone else and you are not an admin | `403` |
+| unknown row | `404` |
+| already cancelled | `200`, unchanged — a double tap is not an error |
+| valid | `200`, `active: false` with `cancelledAt` set |
+
+Owner or admin only. The owner check lives in the service, not the route matcher,
+because no path pattern can express "the caller owns this id".
 
 ### Adding games to a subscription
 
@@ -396,6 +422,11 @@ transaction. Partial refunds are deliberately not supported — refunding any pa
 for a tier closes that user's access to it — because that is the safe direction to
 be wrong in, and it keeps `REFUNDED` the one irreversible transition.
 
+**Ownership is checked in the service, not in the route matcher.** Cancelling is
+addressed by row id, and no `requestMatchers` pattern can express "the caller owns this
+id". A rule like `hasRole("ADMIN")` would either lock owners out of cancelling their
+own subscription or hand everyone else's subscription to every user.
+
 **Closing a subscription revives it rather than adding a row.** The unique
 constraint on `(user_id, subscription_id)` means one row per user per tier, so a
 cancelled row is reused on the next purchase. The alternative — refusing — would
@@ -466,7 +497,7 @@ readable through the API.
 ./mvnw test
 ```
 
-87 tests, no database required — `src/test/resources/application.properties` points
+95 tests, no database required — `src/test/resources/application.properties` points
 at an in-memory H2 so it shadows the Postgres config.
 
 `SecurityAccessTest` covers the whole access matrix: every rule is checked from all
@@ -486,9 +517,9 @@ Honest list of what is missing, roughly in priority order:
 - **HTTP Basic, not tokens.** Every call resends credentials and browsers cache them
   for the whole realm. JWT is the real answer for a SPA or mobile client.
 - **`ddl-auto=update` instead of Flyway migrations.**
-- **A user cannot cancel their own subscription.** Only an admin refund, or a
-  subscription running out, ends access. A `PATCH /user-subscription/{id}/cancel`
-  for the owner — close access, no refund — is the obvious next endpoint.
+- **Cancelling gives no refund and no warning.** Real subscriptions email a reminder
+  before expiry and sometimes prorate a mid-period cancel. Both need a scheduled job and
+  a refund calculation, neither of which exists here.
 - **The first admin has to be promoted by hand** with a SQL update. A seed user or a
   `CommandLineRunner` bootstrap would be cleaner.
 - **No pagination.** Every list endpoint returns everything.
@@ -498,6 +529,7 @@ Honest list of what is missing, roughly in priority order:
   everything else returns a DTO.
 - **No CI.** A GitHub Actions workflow running the build on every push.
 - **No integration test against Postgres.** Everything runs on H2.
+
 
 ## Troubleshooting
 

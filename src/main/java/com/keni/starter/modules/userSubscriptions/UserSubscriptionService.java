@@ -152,6 +152,33 @@ public class UserSubscriptionService {
         PaymentResponse.from(savedPayment));
   }
 
+  /**
+   * Ends the subscription early. Owner or admin only.
+   *
+   * <p>Deliberately does not refund. Cancelling and refunding are different decisions:
+   * a customer walking away from a period they paid for keeps their money, and an admin
+   * handing money back goes through the payment status endpoint, which also cancels
+   * this row. Bundling a refund in here would mean any user could void their own
+   * payments by cancelling.
+   *
+   * <p>Idempotent, because a double tap on a cancel button should not error.
+   */
+  @Transactional
+  public UserSubscriptionResponse cancel(User currentUser, boolean isAdmin, UUID id) {
+    var userSubscription = userSubscriptionRepository.findForUpdate(id).orElseThrow(
+        () -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Subscription not found"));
+
+    // the id is in the path, so the owner check cannot be left to the route matcher
+    var isOwner = userSubscription.getUser().getId().equals(currentUser.getId());
+    if (!isOwner && !isAdmin) {
+      throw new ResponseStatusException(HttpStatus.FORBIDDEN,
+          "You can only cancel your own subscription");
+    }
+
+    userSubscription.cancel();
+    return UserSubscriptionResponse.from(userSubscriptionRepository.save(userSubscription));
+  }
+
   /** Scoped to the caller, the id never comes from the request. */
   public List<UserSubscriptionResponse> getByUserId(UUID userId) {
     return userSubscriptionRepository.findByUserId(userId).stream()

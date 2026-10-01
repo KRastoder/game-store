@@ -59,6 +59,9 @@ public class SecurityConfig {
         // signed in user. Neither takes a userId, the caller comes from the token.
         .requestMatchers(HttpMethod.POST, "/user-subscription").authenticated()
         .requestMatchers(HttpMethod.POST, "/user-subscription/renew").authenticated()
+        // cancelling is open to any signed in user, the service then checks that the row
+        // is theirs. An admin may cancel anyone's.
+        .requestMatchers(HttpMethod.PATCH, "/user-subscription/*/cancel").authenticated()
 
         // ---- admin only ----
         .requestMatchers(HttpMethod.POST, "/game").hasRole("ADMIN")

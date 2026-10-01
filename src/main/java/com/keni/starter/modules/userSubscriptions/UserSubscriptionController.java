@@ -5,6 +5,7 @@ import java.util.UUID;
 
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -40,6 +41,19 @@ public class UserSubscriptionController {
   public SubscribeResponse renew(@AuthenticationPrincipal User currentUser,
       @Valid @RequestBody RenewRequest request) {
     return userSubscriptionService.renew(currentUser, request);
+  }
+
+  /**
+   * Cancels by row id, so the owner check has to happen in the service. Route matching
+   * cannot express "the caller owns this id", and pretending otherwise is how IDOR bugs
+   * ship.
+   */
+  @PatchMapping("/{id}/cancel")
+  public UserSubscriptionResponse cancel(@AuthenticationPrincipal User currentUser,
+      @PathVariable UUID id) {
+    var isAdmin = currentUser.getAuthorities().stream()
+        .anyMatch(a -> a.getAuthority().equals("ROLE_ADMIN"));
+    return userSubscriptionService.cancel(currentUser, isAdmin, id);
   }
 
   @GetMapping("/me")

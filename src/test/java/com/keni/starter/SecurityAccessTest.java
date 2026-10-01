@@ -504,6 +504,109 @@ class SecurityAccessTest {
     return lapsed;
   }
 
+  // ---------------- cancel ----------------
+
+  @Test
+  void ownerCanCancelOwnSubscription() throws Exception {
+    subscribe(userId, subscriptionId, "9.99");
+
+    mvc.perform(patch("/user-subscription/" + mySubscription().getId() + "/cancel")
+        .with(httpBasic("keni", USER_PW)))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.active").value(false))
+        .andExpect(jsonPath("$.cancelledAt").isNotEmpty());
+
+    assertThat(mySubscription().isActive()).isFalse();
+  }
+
+  @Test
+  void cancellingDoesNotRefundThePayment() throws Exception {
+    subscribe(userId, subscriptionId, "9.99");
+    var statusesBefore = paymentStatuses();
+
+    mvc.perform(patch("/user-subscription/" + mySubscription().getId() + "/cancel")
+        .with(httpBasic("keni", USER_PW)))
+        .andExpect(status().isOk());
+
+    // access is gone but the money is not, that is the whole point of separating them
+    assertThat(mySubscription().isActive()).isFalse();
+    assertThat(paymentStatuses()).isEqualTo(statusesBefore);
+    assertThat(paymentStatuses()).contains(
+        com.keni.starter.modules.payments.PaymentStatus.COMPLETED);
+  }
+
+  /** Statuses for this user's payments on this tier, oldest first. */
+  private java.util.List<com.keni.starter.modules.payments.PaymentStatus> paymentStatuses() {
+    return paymentRepository.findByUserIdAndSubscriptionId(userId, subscriptionId).stream()
+        .map(com.keni.starter.modules.payments.Payment::getStatus).toList();
+  }
+
+  @Test
+  void userCannotCancelSomebodyElsesSubscription() throws Exception {
+    subscribe(userId, subscriptionId, "9.99");
+    var kenisRowId = mySubscription().getId();
+
+    mvc.perform(patch("/user-subscription/" + kenisRowId + "/cancel")
+        .with(httpBasic("mallory", USER_PW)))
+        .andExpect(status().isForbidden());
+
+    // and keni keeps her access
+    assertThat(mySubscription().isActive()).isTrue();
+  }
+
+  @Test
+  void adminCanCancelAnyonesSubscription() throws Exception {
+    subscribe(userId, subscriptionId, "9.99");
+
+    mvc.perform(patch("/user-subscription/" + mySubscription().getId() + "/cancel")
+        .with(httpBasic("root", ADMIN_PW)))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.active").value(false));
+  }
+
+  @Test
+  void cancellingTwiceIsNotAnError() throws Exception {
+    subscribe(userId, subscriptionId, "9.99");
+    var id = mySubscription().getId();
+
+    mvc.perform(patch("/user-subscription/" + id + "/cancel").with(httpBasic("keni", USER_PW)))
+        .andExpect(status().isOk());
+    mvc.perform(patch("/user-subscription/" + id + "/cancel").with(httpBasic("keni", USER_PW)))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.active").value(false));
+  }
+
+  @Test
+  void anonymousCannotCancel() throws Exception {
+    subscribe(userId, subscriptionId, "9.99");
+    mvc.perform(patch("/user-subscription/" + mySubscription().getId() + "/cancel"))
+        .andExpect(status().isUnauthorized());
+    assertThat(mySubscription().isActive()).isTrue();
+  }
+
+  @Test
+  void cancellingUnknownSubscriptionIsNotFound() throws Exception {
+    mvc.perform(patch("/user-subscription/" + UUID.randomUUID() + "/cancel")
+        .with(httpBasic("keni", USER_PW)))
+        .andExpect(status().isNotFound());
+  }
+
+  @Test
+  void userCanSubscribeAgainAfterCancelling() throws Exception {
+    subscribe(userId, subscriptionId, "9.99");
+    mvc.perform(patch("/user-subscription/" + mySubscription().getId() + "/cancel")
+        .with(httpBasic("keni", USER_PW)))
+        .andExpect(status().isOk());
+
+    // cancel must not become the lockout that refunding nearly was
+    assertThat(renewStatus("keni", subscriptionId, "9.99")).isEqualTo(409);
+    subscribe(userId, subscriptionId, "9.99");
+
+    assertThat(mySubscription().isActive()).isTrue();
+    assertThat(mySubscription().getCancelledAt()).isNull();
+    assertThat(userSubscriptionRepository.findByUserId(userId)).hasSize(1);
+  }
+
   // ---------------- refund ends access ----------------
 
   /** PENDING -> COMPLETED -> REFUNDED, which is the only route a refund can take. */

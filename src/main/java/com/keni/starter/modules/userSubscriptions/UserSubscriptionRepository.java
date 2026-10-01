@@ -23,6 +23,15 @@ public interface UserSubscriptionRepository
   boolean existsByUserIdAndSubscriptionId(UUID userId, UUID subscriptionId);
 
   /**
+   * Locked read by primary key, so a cancel racing a renewal cannot interleave. Cancel
+   * reads the row, writes cancelled_at, and a renewal reads the same row to work out
+   * which end date to extend from.
+   */
+  @Lock(LockModeType.PESSIMISTIC_WRITE)
+  @Query("select us from UserSubscription us where us.id = :id")
+  Optional<UserSubscription> findForUpdate(@Param("id") UUID id);
+
+  /**
    * Same lookup, but takes a row level write lock.
    *
    * Renewal reads expiresAt, adds a period to it, and writes it back. Without the lock,
