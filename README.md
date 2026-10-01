@@ -185,24 +185,3 @@ List endpoints return an envelope, not a bare array:
 
 The size cap matters: page size is client-controlled, so without a bound
 `?size=1000000` is a one-request denial of service. Spring Boot's own default is 2000.
-
-## Errors
-
-Every failure is an RFC 9457 problem document, from validation to the security filter
-chain:
-
-```json
-{"type":"about:blank","title":"Validation failed","status":400,
- "detail":"One or more fields are invalid.","instance":"/user",
- "errors":{"userName":"must not be blank"}}
-```
-
-Spring's default error body includes the exception class, a message and a full stack
-trace — this API was handing its entire internal call stack to callers on a failed
-validation. `ProblemDetailShapeTest` asserts no response body ever contains
-`at com.keni`, `Exception`, or a `java.base` frame. Rejected request bodies are never
-echoed back, since a malformed body could contain a password.
-
-`401` and `403` are written by hand in `SecurityConfig`, because they are raised before
-any controller exists to throw.
-
