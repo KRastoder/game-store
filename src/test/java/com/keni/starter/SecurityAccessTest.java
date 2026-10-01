@@ -1,5 +1,6 @@
 package com.keni.starter;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.httpBasic;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
@@ -18,6 +19,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.http.MediaType;
 import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.mock.web.MockHttpServletResponse;
 import org.springframework.test.web.servlet.MockMvc;
 
 import com.keni.starter.modules.payments.PaymentRepository;
@@ -30,6 +32,7 @@ import com.keni.starter.modules.user.Role;
 import com.keni.starter.modules.user.User;
 import com.keni.starter.modules.user.UserRepository;
 import com.keni.starter.modules.userSubscriptions.UserSubscriptionRepository;
+import com.keni.starter.modules.userSubscriptions.dtos.SubscribeResponse;
 
 /**
  * Proves the access rules in SecurityConfig actually apply. Access control that
@@ -42,6 +45,9 @@ class SecurityAccessTest {
 
   private static final String USER_PW = "supersecret";
   private static final String ADMIN_PW = "adminpassword";
+
+  private static final tools.jackson.databind.json.JsonMapper MAPPER =
+      tools.jackson.databind.json.JsonMapper.builder().build();
 
   @Autowired
   MockMvc mvc;
@@ -362,6 +368,142 @@ class SecurityAccessTest {
         .andExpect(jsonPath("$.payment.status").value("COMPLETED"))
         // the price stored is the tier's, not whatever the client claimed
         .andExpect(jsonPath("$.payment.amount").value(9.99));
+  }
+
+  // ---------------- renewal ----------------
+
+  @Test
+  void renewalOfActiveSubscriptionKeepsTheDaysAlreadyPaidFor() throws Exception {
+    subscribe(userId, subscriptionId, "9.99");
+
+    var before = mySubscription().getExpiresAt();
+    var result = renew(userId, subscriptionId, "9.99");
+
+    var after = result.userSubscription().expiresAt();
+    // exactly one more 30 day period, measured from the old expiry, not from today
+    assertThat(java.time.Duration.between(before, after).toDays()).isEqualTo(30);
+  }
+
+  @Test
+  void renewalOfLapsedSubscriptionRestartsFromToday() throws Exception {
+    var keni = userRepository.findById(userId).orElseThrow();
+    var tier = subscriptionRepository.findById(subscriptionId).orElseThrow();
+    userSubscriptionRepository.saveAndFlush(lapsedSubscription(keni, tier));
+
+    var now = java.time.Instant.now();
+    var result = renew(userId, subscriptionId, "9.99");
+
+    var after = result.userSubscription().expiresAt();
+    var added = java.time.Duration.between(now, after).toDays();
+    assertThat(added).isBetween(29L, 30L);
+  }
+
+  @Test
+  void renewalChargesAgainWithoutCreatingASecondSubscriptionRow() throws Exception {
+    var seeded = paymentRepository.findByUserId(userId).size();
+    subscribe(userId, subscriptionId, "9.99");
+    assertThat(paymentRepository.findByUserId(userId)).hasSize(seeded + 1);
+    assertThat(userSubscriptionRepository.findByUserId(userId)).hasSize(1);
+
+    var result = renew(userId, subscriptionId, "9.99");
+
+    assertThat(result.payment().amount()).isEqualByComparingTo("9.99");
+    assertThat(result.payment().status())
+        .isEqualTo(com.keni.starter.modules.payments.PaymentStatus.COMPLETED);
+    // charged again...
+    assertThat(paymentRepository.findByUserId(userId)).hasSize(seeded + 2);
+    // ...but still one row, because the unique constraint holds and it was extended
+    assertThat(userSubscriptionRepository.findByUserId(userId)).hasSize(1);
+  }
+
+  @Test
+  void renewalDoesNotOverwriteTheOriginalStartDate() throws Exception {
+    subscribe(userId, subscriptionId, "9.99");
+    var startedAt = mySubscription().getStartedAt();
+    renew(userId, subscriptionId, "9.99");
+    assertThat(mySubscription().getStartedAt()).isEqualTo(startedAt);
+  }
+
+  @Test
+  void renewingATierYouDoNotHaveIsNotFound() throws Exception {
+    assertThat(renewStatus("keni", subscriptionId, "9.99")).isEqualTo(404);
+  }
+
+  @Test
+  void renewalRejectsUnderpayment() throws Exception {
+    subscribe(userId, subscriptionId, "9.99");
+    assertThat(renewStatus("keni", subscriptionId, "0.01")).isEqualTo(400);
+  }
+
+  @Test
+  void anonymousCannotRenew() throws Exception {
+    mvc.perform(post("/user-subscription/renew")
+        .contentType(MediaType.APPLICATION_JSON)
+        .content("{\"subscriptionId\":\"" + subscriptionId + "\",\"amount\":9.99}"))
+        .andExpect(status().isUnauthorized());
+  }
+
+  @Test
+  void renewalBodyCannotNameSomebodyElse() throws Exception {
+    subscribe(userId, subscriptionId, "9.99");
+    // no userId field exists, so an attempt to add one is rejected outright
+    mvc.perform(post("/user-subscription/renew").with(httpBasic("keni", USER_PW))
+        .contentType(MediaType.APPLICATION_JSON)
+        .content("{\"subscriptionId\":\"" + subscriptionId + "\",\"amount\":9.99,"
+            + "\"userId\":\"" + otherUserId + "\"}"))
+        .andExpect(status().isBadRequest());
+  }
+
+  @Test
+  void malloryCannotRenewKenisSubscription() throws Exception {
+    subscribe(userId, subscriptionId, "9.99");
+    var kenisExpiryBefore = mySubscription().getExpiresAt();
+
+    // mallory has no row for this tier, so she gets 404 and keni is untouched
+    assertThat(renewStatus("mallory", subscriptionId, "9.99")).isEqualTo(404);
+    assertThat(mySubscription().getExpiresAt()).isEqualTo(kenisExpiryBefore);
+  }
+
+  private void subscribe(UUID user, UUID subscription, String amount) throws Exception {
+    mvc.perform(post("/user-subscription").with(httpBasic("keni", USER_PW))
+        .contentType(MediaType.APPLICATION_JSON)
+        .content(subscribeBody(user, subscription, amount)))
+        .andExpect(status().isOk());
+  }
+
+  private int renewStatus(String asUser, UUID subscription, String amount) throws Exception {
+    return renewCall(asUser, subscription, amount).getStatus();
+  }
+
+  private SubscribeResponse renew(UUID user, UUID subscription, String amount)
+      throws Exception {
+    var response = renewCall("keni", subscription, amount);
+    assertThat(response.getStatus()).isEqualTo(200);
+    return MAPPER.readValue(response.getContentAsString(), SubscribeResponse.class);
+  }
+
+  private MockHttpServletResponse renewCall(String asUser, UUID subscription, String amount)
+      throws Exception {
+    return mvc
+        .perform(post("/user-subscription/renew").with(httpBasic(asUser, USER_PW))
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"subscriptionId\":\"" + subscription + "\",\"amount\":" + amount + "}"))
+        .andReturn().getResponse();
+  }
+
+  private com.keni.starter.modules.userSubscriptions.UserSubscription mySubscription() {
+    return userSubscriptionRepository.findByUserIdAndSubscriptionId(userId, subscriptionId)
+        .orElseThrow();
+  }
+
+  private com.keni.starter.modules.userSubscriptions.UserSubscription lapsedSubscription(
+      User user, Subscription tier) {
+    var lapsed = new com.keni.starter.modules.userSubscriptions.UserSubscription();
+    lapsed.setUser(user);
+    lapsed.setSubscription(tier);
+    lapsed.setStartedAt(java.time.Instant.now().minus(java.time.Duration.ofDays(60)));
+    lapsed.setExpiresAt(java.time.Instant.now().minus(java.time.Duration.ofDays(30)));
+    return lapsed;
   }
 
   private String subscribeBody(UUID user, UUID subscription, String amount) {

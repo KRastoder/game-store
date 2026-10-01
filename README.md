@@ -125,6 +125,7 @@ Restart is not needed. Sign in again with your existing password.
 | `POST /subscription-game` | 401 | 403 | yes |
 | `GET /subscription-game/**` | 401 | yes | yes |
 | `POST` `/user-subscription` | 401 | **subscribes self + pays** | subscribes self |
+| `POST` `/user-subscription/renew` | 401 | **renews self + pays** | renews self |
 | `GET /user-subscription/me` | 401 | **own only** | own only |
 | `GET /user-subscription` | 401 | 403 | yes |
 | `GET /user-subscription/user/{userId}` | 401 | 403 | yes |
@@ -198,6 +199,7 @@ creates the subscription **and** its payment in one transaction.
 | Method | Path | Body | Returns |
 |---|---|---|---|
 | `POST` | `/user-subscription` | `{subscriptionId, userId, amount, datePaid}` | `SubscribeResponse` |
+| `POST` | `/user-subscription/renew` | `{subscriptionId, amount}` | `SubscribeResponse` |
 | `GET` | `/user-subscription/me` | | own `List<UserSubscriptionResponse>` |
 | `GET` | `/user-subscription` | | `List<UserSubscriptionResponse>` — admin, who bought what |
 | `GET` | `/user-subscription/user/{userId}` | | admin |
@@ -235,6 +237,34 @@ Rules it enforces:
 `amount` is accepted from the client but cross-checked against
 `Subscription.price`, and the stored payment always uses the tier's own price. If
 the client's number were trusted as-is, a user could buy the Gold tier for €0.01.
+
+### Renewal
+
+`POST /user-subscription/renew` charges again and pushes `expiresAt` out by another
+`durationDays`.
+
+Renewing **early keeps the time already paid for** and adds the new period to the
+current expiry. Renewing a lapsed subscription restarts from today:
+
+```
+subscribe   Oct  1  ->  Oct 31
+renew       Oct 31  ->  Nov 30     (not Oct 31 again)
+renew       Nov 30  ->  Dec 30
+```
+
+`startedAt` is never overwritten — it is when the user first subscribed to the tier,
+so it doubles as "customer since".
+
+The subscription **row is extended, not duplicated**, because `user_subscriptions`
+has a unique constraint on `(user_id, subscription_id)`. What was paid is still fully
+recorded: each renewal writes a payment, so "how much has this user paid for Gold"
+is answerable from `payments` even though there is only ever one subscription row.
+
+| Situation | Result |
+|---|---|
+| no subscription to that tier | `404` |
+| `amount` differs from the tier price, either way | `400` |
+| valid | `200`, plus a new `COMPLETED` payment |
 
 ### Adding games to a subscription
 
@@ -330,6 +360,18 @@ from the client and then comparing it to the caller is exactly how IDOR bugs get
 shipped. Both routes are now `/me`, and the id is read off the
 `@AuthenticationPrincipal`, so there is no attacker-controlled input to check.
 
+**Renewal takes a row lock.** Renewal reads `expiresAt`, adds a period and writes it
+back. Without `PESSIMISTIC_WRITE` two concurrent renewals both read the same
+`expiresAt`, both add a period, and the second write discards the first — the
+customer pays twice and receives one period, which is a refund someone has to
+issue by hand. `UserSubscriptionRepository.findForRenewal` locks the row for the
+duration of the transaction.
+
+**Renewing early does not steal paid-for time.** The new period is added to the
+current `expiresAt` when the subscription is still active, and to today when it has
+lapsed. Adding to today unconditionally would silently discard the remainder of a
+period somebody already paid for.
+
 **Payments have exactly one entry point.** `POST /user-subscription` is the only
 thing that creates a `Payment`. There is no `POST /payment`, because a payment with
 no subscription behind it is just a number someone typed — it would let a payment
@@ -393,10 +435,10 @@ Honest list of what is missing, roughly in priority order:
 - **HTTP Basic, not tokens.** Every call resends credentials and browsers cache them
   for the whole realm. JWT is the real answer for a SPA or mobile client.
 - **`ddl-auto=update` instead of Flyway migrations.**
-- **No renewal.** `user_subscriptions` has a unique constraint on
-  `(user_id, subscription_id)`, so one row per user per tier is permanent — even
-  after it expires. Supporting renewal means either extending the existing row or
-  dropping that constraint and keeping a history of rows. Not decided yet.
+- **Refunding a payment does not end the subscription.** A refunded user keeps access
+  until `expiresAt`, and renewal means there are now more payments to refund. A
+  `PATCH /user-subscription/{id}/cancel` that closes the subscription and refunds the
+  latest payment would close the loop.
 - **The first admin has to be promoted by hand** with a SQL update. A seed user or a
   `CommandLineRunner` bootstrap would be cleaner.
 - **No pagination.** Every list endpoint returns everything.
@@ -404,11 +446,8 @@ Honest list of what is missing, roughly in priority order:
   works, but a `@RestControllerAdvice` returning `ProblemDetail` would be better.
 - **Inconsistent response shape.** `POST /game` returns the entity while
   everything else returns a DTO.
-- **Payment status has no transition rules.** A payment can go straight from
-  `PENDING` to `REFUNDED`.
 - **No CI.** A GitHub Actions workflow running the build on every push.
-- **Tests cover access control and validation, not business logic.** No repository
-  tests and no service unit tests yet.
+- **No integration test against Postgres.** Everything runs on H2.
 
 ## Troubleshooting
 

@@ -13,8 +13,10 @@ import org.springframework.web.server.ResponseStatusException;
 import com.keni.starter.modules.payments.Payment;
 import com.keni.starter.modules.payments.PaymentRepository;
 import com.keni.starter.modules.payments.PaymentStatus;
+import com.keni.starter.modules.payments.dtos.PaymentResponse;
 import com.keni.starter.modules.subscriptions.SubscriptionRepository;
 import com.keni.starter.modules.user.User;
+import com.keni.starter.modules.userSubscriptions.dtos.RenewRequest;
 import com.keni.starter.modules.userSubscriptions.dtos.SubscribeRequest;
 import com.keni.starter.modules.userSubscriptions.dtos.SubscribeResponse;
 import com.keni.starter.modules.userSubscriptions.dtos.UserSubscriptionResponse;
@@ -81,7 +83,57 @@ public class UserSubscriptionService {
     var savedPayment = paymentRepository.save(payment);
 
     return new SubscribeResponse(UserSubscriptionResponse.from(savedSubscription),
-        com.keni.starter.modules.payments.dtos.PaymentResponse.from(savedPayment));
+        PaymentResponse.from(savedPayment));
+  }
+
+  /**
+   * Renews a subscription the caller already holds by pushing expiresAt out by another
+   * period and charging again.
+   *
+   * <p>The row is updated rather than a second one inserted, because the table has a
+   * unique constraint on (user_id, subscription_id). What was paid is still recorded,
+   * once per period, in the payments table.
+   *
+   * @param currentUser the authenticated caller, the only user allowed to renew
+   */
+  @Transactional
+  public SubscribeResponse renew(User currentUser, RenewRequest request) {
+    var subscription = subscriptionRepository.findById(request.subscriptionId()).orElseThrow(
+        () -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Subscription not found"));
+
+    // the price is whatever the tier says it costs, whatever the client claims
+    if (request.amount().compareTo(subscription.getPrice()) != 0) {
+      throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+          "Amount does not match the price of " + subscription.getName());
+    }
+
+    // locked read, otherwise a concurrent renewal would overwrite this one
+    var userSubscription = userSubscriptionRepository
+        .findForRenewal(currentUser.getId(), request.subscriptionId())
+        .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND,
+            "You do not have a subscription to " + subscription.getName()));
+
+    var now = Instant.now();
+    var currentExpiry = userSubscription.getExpiresAt();
+
+    // Renewing early keeps the time already paid for and adds the new period on the
+    // end. Renewing a lapsed one starts again from today.
+    var periodStarts = currentExpiry != null && currentExpiry.isAfter(now) ? currentExpiry : now;
+    var periodEnds = periodStarts.plus(subscription.getDurationDays(), ChronoUnit.DAYS);
+
+    userSubscription.setExpiresAt(periodEnds);
+
+    var payment = new Payment();
+    payment.setUser(currentUser);
+    payment.setSubscription(subscription);
+    payment.setDatePaid(now);
+    payment.setAmount(subscription.getPrice());
+    payment.setStatus(PaymentStatus.COMPLETED);
+
+    var savedPayment = paymentRepository.save(payment);
+
+    return new SubscribeResponse(UserSubscriptionResponse.from(userSubscription),
+        PaymentResponse.from(savedPayment));
   }
 
   /** Scoped to the caller, the id never comes from the request. */

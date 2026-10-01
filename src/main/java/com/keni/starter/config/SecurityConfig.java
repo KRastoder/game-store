@@ -55,6 +55,10 @@ public class SecurityConfig {
         .requestMatchers(HttpMethod.GET, "/user/me").authenticated()
         .requestMatchers(HttpMethod.GET, "/user-subscription/me").authenticated()
         .requestMatchers(HttpMethod.GET, "/payment/me").authenticated()
+        // subscribing and renewing both charge the caller, so both stay open to any
+        // signed in user. Neither takes a userId, the caller comes from the token.
+        .requestMatchers(HttpMethod.POST, "/user-subscription").authenticated()
+        .requestMatchers(HttpMethod.POST, "/user-subscription/renew").authenticated()
 
         // ---- admin only ----
         .requestMatchers(HttpMethod.POST, "/game").hasRole("ADMIN")

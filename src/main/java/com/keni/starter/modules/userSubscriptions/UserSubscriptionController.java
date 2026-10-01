@@ -12,6 +12,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.keni.starter.modules.user.User;
+import com.keni.starter.modules.userSubscriptions.dtos.RenewRequest;
 import com.keni.starter.modules.userSubscriptions.dtos.SubscribeRequest;
 import com.keni.starter.modules.userSubscriptions.dtos.SubscribeResponse;
 import com.keni.starter.modules.userSubscriptions.dtos.UserSubscriptionResponse;
@@ -32,6 +33,13 @@ public class UserSubscriptionController {
   public SubscribeResponse subscribe(@AuthenticationPrincipal User currentUser,
       @Valid @RequestBody SubscribeRequest request) {
     return userSubscriptionService.subscribe(currentUser, request);
+  }
+
+  /** Any signed in user. Pushes expiresAt out by another period and charges again. */
+  @PostMapping("/renew")
+  public SubscribeResponse renew(@AuthenticationPrincipal User currentUser,
+      @Valid @RequestBody RenewRequest request) {
+    return userSubscriptionService.renew(currentUser, request);
   }
 
   @GetMapping("/me")
