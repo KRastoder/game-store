@@ -1,6 +1,5 @@
 package com.keni.starter.modules.payments;
 
-import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 
@@ -9,44 +8,23 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
-import com.keni.starter.modules.payments.dtos.CreateRequestPayment;
 import com.keni.starter.modules.payments.dtos.PaymentResponse;
 import com.keni.starter.modules.payments.dtos.UpdatePaymentStatusRequest;
-import com.keni.starter.modules.subscriptions.SubscriptionRepository;
-import com.keni.starter.modules.user.UserRepository;
 
 @Service
 public class PaymentService {
   private final PaymentRepository paymentRepository;
-  private final UserRepository userRepository;
-  private final SubscriptionRepository subscriptionRepository;
 
-  public PaymentService(PaymentRepository paymentRepository, UserRepository userRepository,
-      SubscriptionRepository subscriptionRepository) {
+  public PaymentService(PaymentRepository paymentRepository) {
     this.paymentRepository = paymentRepository;
-    this.userRepository = userRepository;
-    this.subscriptionRepository = subscriptionRepository;
   }
 
-  @Transactional
-  public PaymentResponse createPayment(CreateRequestPayment request) {
-    var user = userRepository.findById(request.userId())
-        .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "User not found"));
-    var subscription = subscriptionRepository.findById(request.subId()).orElseThrow(
-        () -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Subscription not found"));
-
-    // Manual mapping xd
-    var payment = new Payment();
-    payment.setUser(user);
-    payment.setSubscription(subscription);
-    payment.setDatePaid(request.datePaid() == null ? Instant.now() : request.datePaid());
-    payment.setAmount(request.amount());
-    // Status is never taken from the client, otherwise anyone could self approve a payment
-    payment.setStatus(PaymentStatus.PENDING);
-
-    return PaymentResponse.from(paymentRepository.save(payment));
-  }
-
+  /**
+   * There is deliberately no create method here. A payment is only ever created by the
+   * subscribe checkout, where it is written in the same transaction as the subscription
+   * it pays for. A standalone create would let someone record a payment against a user
+   * who has no subscription for it.
+   */
   @Transactional
   public PaymentResponse updateStatus(UUID id, UpdatePaymentStatusRequest request) {
     var payment = paymentRepository.findById(id)

@@ -1,5 +1,7 @@
 package com.keni.starter.config;
 
+import jakarta.servlet.DispatcherType;
+
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.HttpMethod;
@@ -40,6 +42,12 @@ public class SecurityConfig {
   @Bean
   public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
     http.authorizeHttpRequests(auth -> auth
+        // sendError() triggers an ERROR dispatch to /error, which re-enters this chain.
+        // Without this the URI is /error there, so every rule above misses it, it falls
+        // through to anyRequest().authenticated() and anonymous callers get a 401 for
+        // what is really a 400 such as a validation failure on POST /user.
+        .dispatcherTypeMatchers(DispatcherType.ERROR).permitAll()
+
         // ---- open ----
         .requestMatchers(HttpMethod.POST, "/user").permitAll()
 
@@ -52,7 +60,6 @@ public class SecurityConfig {
         .requestMatchers(HttpMethod.POST, "/game").hasRole("ADMIN")
         .requestMatchers(HttpMethod.POST, "/subscription").hasRole("ADMIN")
         .requestMatchers(HttpMethod.POST, "/subscription-game").hasRole("ADMIN")
-        .requestMatchers(HttpMethod.POST, "/payment").hasRole("ADMIN")
         .requestMatchers(HttpMethod.PATCH, "/payment/*/status").hasRole("ADMIN")
         .requestMatchers(HttpMethod.GET, "/user").hasRole("ADMIN")
         .requestMatchers(HttpMethod.GET, "/user/*").hasRole("ADMIN")

@@ -7,12 +7,10 @@ import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
-import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
-import com.keni.starter.modules.payments.dtos.CreateRequestPayment;
 import com.keni.starter.modules.payments.dtos.PaymentResponse;
 import com.keni.starter.modules.payments.dtos.UpdatePaymentStatusRequest;
 import com.keni.starter.modules.user.User;
@@ -28,10 +26,10 @@ public class PaymentController {
     this.paymentService = paymentService;
   }
 
-  @PostMapping
-  public PaymentResponse createPayment(@Valid @RequestBody CreateRequestPayment request) {
-    return paymentService.createPayment(request);
-  }
+  /**
+   * No POST here on purpose. Payments come from POST /user-subscription, which creates
+   * one alongside the subscription in the same transaction.
+   */
 
   @PatchMapping("/{id}/status")
   public PaymentResponse updateStatus(@PathVariable UUID id,

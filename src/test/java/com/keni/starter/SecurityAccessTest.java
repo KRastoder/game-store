@@ -341,6 +341,29 @@ class SecurityAccessTest {
         .andExpect(status().isNotFound());
   }
 
+  @Test
+  void thereIsNoStandalonePaymentCreationEndpoint() throws Exception {
+    // payments may only come from the subscribe checkout, so this route must not exist.
+    // Admin included: it is gone for everyone, not just demoted.
+    mvc.perform(post("/payment").with(httpBasic("root", ADMIN_PW))
+        .contentType(MediaType.APPLICATION_JSON)
+        .content("{\"userId\":\"" + otherUserId + "\",\"subId\":\"" + subscriptionId
+            + "\",\"amount\":0.01}"))
+        .andExpect(status().isMethodNotAllowed());
+  }
+
+  @Test
+  void subscribingIsTheOnlyWayToGetAPayment() throws Exception {
+    mvc.perform(post("/user-subscription").with(httpBasic("keni", USER_PW))
+        .contentType(MediaType.APPLICATION_JSON)
+        .content(subscribeBody(userId, subscriptionId, "9.99")))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.payment.id").isNotEmpty())
+        .andExpect(jsonPath("$.payment.status").value("COMPLETED"))
+        // the price stored is the tier's, not whatever the client claimed
+        .andExpect(jsonPath("$.payment.amount").value(9.99));
+  }
+
   private String subscribeBody(UUID user, UUID subscription, String amount) {
     return "{\"subscriptionId\":\"" + subscription + "\",\"userId\":\"" + user
         + "\",\"amount\":" + amount + "}";

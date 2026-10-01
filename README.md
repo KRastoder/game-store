@@ -131,8 +131,7 @@ Restart is not needed. Sign in again with your existing password.
 | `GET /user-subscription/subscription/{id}` | 401 | 403 | yes |
 | `GET /payment/me` | 401 | **own only** | own only |
 | `GET /payment` | 401 | 403 | yes |
-| `POST /payment` | 401 | 403 | yes |
-| `PATCH /payment/{id}/status` | 401 | 403 | yes |
+| `PATCH` `/payment/{id}/status` | 401 | 403 | yes |
 
 Note the shape of the `/me` routes. There is no
 `GET /payment/user/{userId}` any more on purpose — putting a user id in a path
@@ -249,10 +248,14 @@ the client's number were trusted as-is, a user could buy the Gold tier for €0.
 
 | Method | Path | Body | Returns |
 |---|---|---|---|
-| `POST` | `/payment` | `{userId, subId, datePaid, amount}` | `PaymentResponse` — admin |
 | `PATCH` | `/payment/{id}/status` | `{status}` | `PaymentResponse` — admin |
 | `GET` | `/payment/me` | | own `List<PaymentResponse>` |
 | `GET` | `/payment` | | `List<PaymentResponse>` — admin, every payment |
+
+**There is no `POST /payment`.** Payments are only ever created by
+`POST /user-subscription`, in the same transaction as the subscription they pay for.
+A standalone create would let anyone record a payment against a user who has no
+subscription for it, so the route does not exist. `POST /payment` returns `405`.
 
 `status` is one of `PENDING`, `COMPLETED`, `FAILED`, `REFUNDED`. New payments are
 always created as `PENDING` — the client cannot set it, otherwise anyone could mark
@@ -326,6 +329,14 @@ and any signed in user could swap in someone else's id. Accepting an identifier
 from the client and then comparing it to the caller is exactly how IDOR bugs get
 shipped. Both routes are now `/me`, and the id is read off the
 `@AuthenticationPrincipal`, so there is no attacker-controlled input to check.
+
+**Payments have exactly one entry point.** `POST /user-subscription` is the only
+thing that creates a `Payment`. There is no `POST /payment`, because a payment with
+no subscription behind it is just a number someone typed — it would let a payment
+be recorded against a user who never bought anything. Refunds and failures are a
+separate concern handled by the admin status endpoint, which enforces a state
+machine (`PENDING → COMPLETED | FAILED`, `COMPLETED → REFUNDED`, the rest
+terminal).
 
 **Subscribe and pay are one transaction.** `POST /user-subscription` writes the
 `UserSubscription` and the `Payment` inside a single `@Transactional`. Splitting
