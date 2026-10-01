@@ -15,12 +15,14 @@ public record UserSubscriptionResponse(
     Instant startedAt,
     Instant expiresAt,
     Instant cancelledAt,
+    Instant reminderSentAt,
     boolean active) {
 
-  public static UserSubscriptionResponse from(UserSubscription userSubscription) {
+  public static UserSubscriptionResponse from(UserSubscription userSubscription, Instant now) {
     return new UserSubscriptionResponse(userSubscription.getId(),
         userSubscription.getUser().getId(), userSubscription.getSubscription().getId(),
         userSubscription.getStartedAt(), userSubscription.getExpiresAt(),
-        userSubscription.getCancelledAt(), userSubscription.isActive());
+        userSubscription.getCancelledAt(), userSubscription.getReminderSentAt(),
+        userSubscription.isActive(now));
   }
 }

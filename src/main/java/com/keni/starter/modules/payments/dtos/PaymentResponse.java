@@ -16,11 +16,13 @@ public record PaymentResponse(
     UUID subId,
     Instant datePaid,
     BigDecimal amount,
+    BigDecimal refundedAmount,
+    BigDecimal netAmount,
     PaymentStatus status) {
 
   public static PaymentResponse from(Payment payment) {
     return new PaymentResponse(payment.getId(), payment.getUser().getId(),
         payment.getSubscription().getId(), payment.getDatePaid(), payment.getAmount(),
-        payment.getStatus());
+        payment.getRefundedAmount(), payment.netAmount(), payment.getStatus());
   }
 }

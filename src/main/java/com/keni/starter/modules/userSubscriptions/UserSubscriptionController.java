@@ -7,12 +7,13 @@ import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RestController;
 
 import com.keni.starter.modules.user.User;
+import com.keni.starter.modules.userSubscriptions.dtos.CancelSubscriptionResponse;
 import com.keni.starter.modules.userSubscriptions.dtos.RenewRequest;
 import com.keni.starter.modules.userSubscriptions.dtos.SubscribeRequest;
 import com.keni.starter.modules.userSubscriptions.dtos.SubscribeResponse;
@@ -49,7 +50,7 @@ public class UserSubscriptionController {
    * ship.
    */
   @PatchMapping("/{id}/cancel")
-  public UserSubscriptionResponse cancel(@AuthenticationPrincipal User currentUser,
+  public CancelSubscriptionResponse cancel(@AuthenticationPrincipal User currentUser,
       @PathVariable UUID id) {
     var isAdmin = currentUser.getAuthorities().stream()
         .anyMatch(a -> a.getAuthority().equals("ROLE_ADMIN"));

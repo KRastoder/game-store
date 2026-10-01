@@ -389,7 +389,7 @@ class SecurityAccessTest {
 
     // reused rather than duplicated, because of the unique constraint
     assertThat(userSubscriptionRepository.findByUserId(userId)).hasSize(1);
-    assertThat(mySubscription().isActive()).isTrue();
+    assertThat(mySubscription().isActive(java.time.Instant.now())).isTrue();
     assertThat(mySubscription().getId()).isEqualTo(lapsedRow.getId());
     // a fresh period measured from today
     assertThat(java.time.Duration.between(java.time.Instant.now(),
@@ -513,26 +513,42 @@ class SecurityAccessTest {
     mvc.perform(patch("/user-subscription/" + mySubscription().getId() + "/cancel")
         .with(httpBasic("keni", USER_PW)))
         .andExpect(status().isOk())
-        .andExpect(jsonPath("$.active").value(false))
-        .andExpect(jsonPath("$.cancelledAt").isNotEmpty());
+        .andExpect(jsonPath("$.userSubscription.active").value(false))
+        .andExpect(jsonPath("$.userSubscription.cancelledAt").isNotEmpty());
 
-    assertThat(mySubscription().isActive()).isFalse();
+    assertThat(mySubscription().isActive(java.time.Instant.now())).isFalse();
   }
 
   @Test
-  void cancellingDoesNotRefundThePayment() throws Exception {
+  void cancellingRefundsOnlyTheUnspentPart() throws Exception {
     subscribe(userId, subscriptionId, "9.99");
-    var statusesBefore = paymentStatuses();
 
+    // cancelling immediately means the whole 30 day period is unspent, so almost all of
+    // the 9.99 comes back. It is a prorated refund, not an arbitrary one.
     mvc.perform(patch("/user-subscription/" + mySubscription().getId() + "/cancel")
         .with(httpBasic("keni", USER_PW)))
-        .andExpect(status().isOk());
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.refundedAmount").value(9.99))
+        .andExpect(jsonPath("$.payment.status").value("REFUNDED"))
+        .andExpect(jsonPath("$.payment.netAmount").value(0.0));
 
-    // access is gone but the money is not, that is the whole point of separating them
-    assertThat(mySubscription().isActive()).isFalse();
-    assertThat(paymentStatuses()).isEqualTo(statusesBefore);
-    assertThat(paymentStatuses()).contains(
-        com.keni.starter.modules.payments.PaymentStatus.COMPLETED);
+    assertThat(mySubscription().isActive(java.time.Instant.now())).isFalse();
+  }
+
+  @Test
+  void cancellingNeverRefundsMoreThanWasPaid() throws Exception {
+    subscribe(userId, subscriptionId, "9.99");
+
+    var body = mvc.perform(
+        patch("/user-subscription/" + mySubscription().getId() + "/cancel")
+            .with(httpBasic("keni", USER_PW)))
+        .andExpect(status().isOk())
+        .andReturn().getResponse().getContentAsString();
+
+    var refunded = new java.math.BigDecimal(
+        MAPPER.readTree(body).get("refundedAmount").asText());
+    assertThat(refunded).isLessThanOrEqualTo(new java.math.BigDecimal("9.99"));
+    assertThat(refunded).isGreaterThanOrEqualTo(java.math.BigDecimal.ZERO);
   }
 
   /** Statuses for this user's payments on this tier, oldest first. */
@@ -551,7 +567,7 @@ class SecurityAccessTest {
         .andExpect(status().isForbidden());
 
     // and keni keeps her access
-    assertThat(mySubscription().isActive()).isTrue();
+    assertThat(mySubscription().isActive(java.time.Instant.now())).isTrue();
   }
 
   @Test
@@ -561,7 +577,7 @@ class SecurityAccessTest {
     mvc.perform(patch("/user-subscription/" + mySubscription().getId() + "/cancel")
         .with(httpBasic("root", ADMIN_PW)))
         .andExpect(status().isOk())
-        .andExpect(jsonPath("$.active").value(false));
+        .andExpect(jsonPath("$.userSubscription.active").value(false));
   }
 
   @Test
@@ -570,10 +586,14 @@ class SecurityAccessTest {
     var id = mySubscription().getId();
 
     mvc.perform(patch("/user-subscription/" + id + "/cancel").with(httpBasic("keni", USER_PW)))
-        .andExpect(status().isOk());
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.refundedAmount").value(9.99));
+    // the second cancel has nothing left to prorate: the payment is already fully
+    // refunded, so it must pay out zero again rather than erroring or doubling up
     mvc.perform(patch("/user-subscription/" + id + "/cancel").with(httpBasic("keni", USER_PW)))
         .andExpect(status().isOk())
-        .andExpect(jsonPath("$.active").value(false));
+        .andExpect(jsonPath("$.refundedAmount").value(0.0))
+        .andExpect(jsonPath("$.userSubscription.active").value(false));
   }
 
   @Test
@@ -581,7 +601,7 @@ class SecurityAccessTest {
     subscribe(userId, subscriptionId, "9.99");
     mvc.perform(patch("/user-subscription/" + mySubscription().getId() + "/cancel"))
         .andExpect(status().isUnauthorized());
-    assertThat(mySubscription().isActive()).isTrue();
+    assertThat(mySubscription().isActive(java.time.Instant.now())).isTrue();
   }
 
   @Test
@@ -602,7 +622,7 @@ class SecurityAccessTest {
     assertThat(renewStatus("keni", subscriptionId, "9.99")).isEqualTo(409);
     subscribe(userId, subscriptionId, "9.99");
 
-    assertThat(mySubscription().isActive()).isTrue();
+    assertThat(mySubscription().isActive(java.time.Instant.now())).isTrue();
     assertThat(mySubscription().getCancelledAt()).isNull();
     assertThat(userSubscriptionRepository.findByUserId(userId)).hasSize(1);
   }
@@ -628,7 +648,7 @@ class SecurityAccessTest {
         .andExpect(jsonPath("$.status").value("REFUNDED"));
 
     assertThat(mySubscription().getCancelledAt()).isNotNull();
-    assertThat(mySubscription().isActive()).isFalse();
+    assertThat(mySubscription().isActive(java.time.Instant.now())).isFalse();
 
     // renewing a cancelled subscription makes no sense, they have to buy it again
     assertThat(renewStatus("keni", subscriptionId, "9.99")).isEqualTo(409);
@@ -649,7 +669,7 @@ class SecurityAccessTest {
     subscribe(userId, subscriptionId, "9.99");
 
     assertThat(mySubscription().getCancelledAt()).isNull();
-    assertThat(mySubscription().isActive()).isTrue();
+    assertThat(mySubscription().isActive(java.time.Instant.now())).isTrue();
     // revived on the same row, so still exactly one
     assertThat(userSubscriptionRepository.findByUserId(userId)).hasSize(1);
     // and the money really was taken again
@@ -667,7 +687,7 @@ class SecurityAccessTest {
         .contentType(MediaType.APPLICATION_JSON).content("{\"status\":\"REFUNDED\"}"))
         .andExpect(status().isForbidden());
     // refused, so access is untouched
-    assertThat(mySubscription().isActive()).isTrue();
+    assertThat(mySubscription().isActive(java.time.Instant.now())).isTrue();
   }
 
   private UUID firstPaymentId(UUID user) {

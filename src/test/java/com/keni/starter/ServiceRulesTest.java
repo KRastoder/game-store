@@ -243,14 +243,14 @@ class ServiceRulesTest {
   @Test
   void refundingAPaymentEndsTheSubscription() {
     var row = putUserOnTier();
-    assertThat(row.isActive()).isTrue();
+    assertThat(row.isActive(java.time.Instant.now())).isTrue();
 
     paymentService.updateStatus(latestPaymentForTier().getId(),
         new UpdatePaymentStatusRequest(PaymentStatus.REFUNDED));
 
     var reloaded = userSubscriptionRepository.findById(row.getId()).orElseThrow();
     assertThat(reloaded.getCancelledAt()).isNotNull();
-    assertThat(reloaded.isActive()).isFalse();
+    assertThat(reloaded.isActive(java.time.Instant.now())).isFalse();
   }
 
   @Test
@@ -290,7 +290,7 @@ class ServiceRulesTest {
 
     assertThat(userSubscriptionRepository.findById(row.getId()).orElseThrow().getCancelledAt())
         .isNull();
-    assertThat(userSubscriptionRepository.findById(row.getId()).orElseThrow().isActive()).isTrue();
+    assertThat(userSubscriptionRepository.findById(row.getId()).orElseThrow().isActive(java.time.Instant.now())).isTrue();
   }
 
   @Test
@@ -301,7 +301,7 @@ class ServiceRulesTest {
     row.setStartedAt(java.time.Instant.now().minus(java.time.Duration.ofDays(60)));
     row.setExpiresAt(java.time.Instant.now().minus(java.time.Duration.ofDays(30)));
     // expired but never cancelled, which is not the same thing
-    assertThat(row.isActive()).isFalse();
+    assertThat(row.isActive(java.time.Instant.now())).isFalse();
     assertThat(row.getCancelledAt()).isNull();
   }
 
@@ -309,9 +309,9 @@ class ServiceRulesTest {
   void cancelIsIdempotent() {
     var row = putUserOnTier();
 
-    row.cancel();
+    row.cancel(java.time.Instant.now());
     var first = row.getCancelledAt();
-    row.cancel();
+    row.cancel(java.time.Instant.now());
     assertThat(row.getCancelledAt()).isEqualTo(first);
   }
 

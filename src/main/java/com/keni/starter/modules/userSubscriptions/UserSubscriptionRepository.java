@@ -1,5 +1,6 @@
 package com.keni.starter.modules.userSubscriptions;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -30,6 +31,22 @@ public interface UserSubscriptionRepository
   @Lock(LockModeType.PESSIMISTIC_WRITE)
   @Query("select us from UserSubscription us where us.id = :id")
   Optional<UserSubscription> findForUpdate(@Param("id") UUID id);
+
+  /**
+   * Live subscriptions that run out before {@code before}, and have not been reminded
+   * about yet. This is the reminder job's query.
+   *
+   * <p>{@code expiresAtAfter now} rather than a plain expiry comparison, so a
+   * subscription that has already lapsed is never nagged about after the fact.
+   */
+  @Query("select us from UserSubscription us"
+      + " where us.cancelledAt is null"
+      + " and us.reminderSentAt is null"
+      + " and us.expiresAt is not null"
+      + " and us.expiresAt > :now"
+      + " and us.expiresAt <= :before")
+  List<UserSubscription> findExpiringWithoutReminder(@Param("now") Instant now,
+      @Param("before") Instant before);
 
   /**
    * Same lookup, but takes a row level write lock.

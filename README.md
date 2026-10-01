@@ -202,7 +202,7 @@ creates the subscription **and** its payment in one transaction.
 |---|---|---|---|
 | `POST` | `/user-subscription` | `{subscriptionId, userId, amount, datePaid}` | `SubscribeResponse` |
 | `POST` | `/user-subscription/renew` | `{subscriptionId, amount}` | `SubscribeResponse` |
-| `PATCH` | `/user-subscription/{id}/cancel` | none | `UserSubscriptionResponse` |
+| `PATCH` | `/user-subscription/{id}/cancel` | none | `CancelSubscriptionResponse`, with `refundedAmount` |
 | `GET` | `/user-subscription/me` | | own `List<UserSubscriptionResponse>` |
 | `GET` | `/user-subscription` | | `List<UserSubscriptionResponse>` — admin, who bought what |
 | `GET` | `/user-subscription/user/{userId}` | | admin |
@@ -307,17 +307,50 @@ in the path is the whole request.
 curl -u mallory:supersecret -X PATCH localhost:8080/user-subscription/<id>/cancel
 ```
 
-**Cancelling does not refund.** A customer walking away from a period they already paid
-for keeps their money; an admin handing money back goes through
-`PATCH /payment/{id}/status`, which cancels the row as well. Folding a refund into
-cancel would let any user void their own payments by cancelling.
+**Cancelling prorates a refund.** A customer walking away gets back the unspent
+fraction of the period, so cancelling on day one refunds almost everything and
+cancelling on the last day refunds nothing:
+
+```
+30 day tier at 9.99, cancelled 15 days in  ->  4.99 back, 5.00 kept
+30 day tier at 9.99, cancelled at once      ->  9.99 back
+30 day tier at 9.99, cancelled after expiry ->  0.00 back
+```
+
+The refund attaches to the **newest** payment, because that is the one covering the
+current period. Payments now carry `refundedAmount` and `netAmount`, since a single
+status flag cannot express "9.99 paid, 4.99 back, 5.00 still held". A refund is refused
+if it would exceed what was paid, so a bug cannot invent money.
 
 | Situation | Result |
 |---|---|
 | the row belongs to someone else and you are not an admin | `403` |
 | unknown row | `404` |
-| already cancelled | `200`, unchanged — a double tap is not an error |
-| valid | `200`, `active: false` with `cancelledAt` set |
+| already cancelled | `200`, `refundedAmount: 0` — nothing left to prorate |
+| valid | `200` with the refund and the updated payment |
+
+### Expiry reminders
+
+`ExpiryReminderJob` runs on a schedule and warns holders whose subscription ends within
+three days:
+
+```properties
+app.reminders.cron=0 0 7 * * *   # 07:00 daily by default
+```
+
+It goes through the `ExpiryNotifier` interface. The shipped implementation logs, so
+there is no SMTP dependency and no side effects in tests — define your own
+`ExpiryNotifier` bean and the job picks it up. Each subscription is warned **once**:
+`reminder_sent_at` is stamped in the same transaction as the send, and renewing clears
+it so the next period warns again. Cancelled and already-expired subscriptions are
+never contacted.
+
+### Time is injected
+
+`TimeConfig` provides a `Clock` bean, and nothing calls `Instant.now()` directly.
+Proration is a function of "now", and it is exactly the kind of arithmetic that is wrong
+in a way a test at the current moment cannot catch. `ProrationTest` pins it at an exact
+moment, including halfway through a period.
 
 Owner or admin only. The owner check lives in the service, not the route matcher,
 because no path pattern can express "the caller owns this id".
@@ -504,7 +537,7 @@ readable through the API.
 ./mvnw test
 ```
 
-106 tests, no database required — `src/test/resources/application.properties` points
+128 tests, no database required — `src/test/resources/application.properties` points
 at an in-memory H2 so it shadows the Postgres config.
 
 `SecurityAccessTest` covers the whole access matrix: every rule is checked from all
@@ -516,7 +549,9 @@ to change their role, and trying to subscribe somebody else.
 `RepositoryQueryTest` exercises every derived query and database constraint.
 `ServiceRulesTest` covers the business rules, including the payment state machine and
 the refund-ends-access behaviour. `ProblemDetailShapeTest` checks every error path
-returns the same RFC 9457 shape and leaks no stack trace.
+returns the same RFC 9457 shape and leaks no stack trace. `ProrationTest` pins the
+refund arithmetic at exact moments, and `ExpiryReminderJobTest` drives the scheduler's
+query and its once-only guard.
 
 ## Errors
 
@@ -568,9 +603,11 @@ Honest list of what is missing, roughly in priority order:
 - **HTTP Basic, not tokens.** Every call resends credentials and browsers cache them
   for the whole realm. JWT is the real answer for a SPA or mobile client.
 - **`ddl-auto=update` instead of Flyway migrations.**
-- **Cancelling gives no refund and no warning.** Real subscriptions email a reminder
-  before expiry and sometimes prorate a mid-period cancel. Both need a scheduled job and
-  a refund calculation, neither of which exists here.
+- **Reminders are logged, not emailed.** `LoggingExpiryNotifier` stands in for SMTP.
+  A real deployment supplies an `ExpiryNotifier` bean.
+- **The reminder job is single-node.** Two app instances would both run the cron. The
+  `reminder_sent_at` guard stops duplicate emails, but the job needs a distributed lock
+  or a dedicated scheduler to be safe at scale.
 - **The first admin has to be promoted by hand** with a SQL update. A seed user or a
   `CommandLineRunner` bootstrap would be cleaner.
 - **No pagination.** Every list endpoint returns everything.
@@ -603,5 +640,6 @@ Change the host side of the mapping in `docker-compose.yml`, e.g. `"5433:5432"`.
 **Forgot a column when changing an entity**
 `ddl-auto=update` adds columns but will not remove them. If you want a clean
 schema during development: `docker compose down -v && docker compose up --build`.
+
 
 

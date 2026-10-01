@@ -49,7 +49,31 @@ public class Payment {
   @Column(name = "amount", nullable = false)
   private BigDecimal amount;
 
+  /**
+   * How much of this payment has been handed back. Null until a refund happens.
+   *
+   * <p>Needed because a mid period cancellation refunds the unused fraction rather than
+   * the whole amount, and a single status flag cannot express "partly refunded".
+   */
+  @Column(name = "refunded_amount")
+  private BigDecimal refundedAmount;
+
   @Enumerated(EnumType.STRING)
   @Column(name = "status", nullable = false)
   private PaymentStatus status;
+
+  /** Nothing given back yet. */
+  public boolean hasNoRefund() {
+    return refundedAmount == null;
+  }
+
+  /** The entire amount was given back. */
+  public boolean isFullyRefunded() {
+    return refundedAmount != null && refundedAmount.compareTo(amount) >= 0;
+  }
+
+  /** What is still held, after any refund. */
+  public BigDecimal netAmount() {
+    return refundedAmount == null ? amount : amount.subtract(refundedAmount);
+  }
 }

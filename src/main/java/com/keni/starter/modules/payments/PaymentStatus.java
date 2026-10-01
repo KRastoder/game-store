@@ -1,5 +1,7 @@
 package com.keni.starter.modules.payments;
 
+import java.math.BigDecimal;
+
 public enum PaymentStatus {
   PENDING,
   COMPLETED,
@@ -24,5 +26,24 @@ public enum PaymentStatus {
       case COMPLETED -> next == REFUNDED;
       case FAILED, REFUNDED -> false;
     };
+  }
+
+  /**
+   * Whether a refund of the given size may be applied from this status.
+   *
+   * <p>A refund is rejected outright if the amount exceeds what was paid. Clamping it
+   * silently would let a bug invent money, and a refund on a payment that never succeeded
+   * would be money out of the door for nothing.
+   */
+  public boolean allowsRefund(BigDecimal alreadyRefunded, BigDecimal requested,
+      BigDecimal paid) {
+    if (this != COMPLETED) {
+      return false;
+    }
+    if (requested == null || requested.signum() <= 0) {
+      return false;
+    }
+    var already = alreadyRefunded == null ? BigDecimal.ZERO : alreadyRefunded;
+    return already.add(requested).compareTo(paid) <= 0;
   }
 }
