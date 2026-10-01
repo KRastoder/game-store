@@ -191,7 +191,7 @@ so a client typo like `"userNam"` fails loudly instead of being silently dropped
 
 | Method | Path | Body | Returns |
 |---|---|---|---|
-| `POST` | `/game` | `{title, description, company}` | `Game` |
+| `POST` | `/game` | `{title, description, company}` | `GameResponse` |
 
 ### Subscribing a user
 
@@ -542,7 +542,7 @@ readable through the API.
 ./mvnw test
 ```
 
-139 tests, no database required — `src/test/resources/application.properties` points
+142 tests, no database required — `src/test/resources/application.properties` points
 at an in-memory H2 so it shadows the Postgres config. That file replaces the main one
 wholesale rather than merging, so settings like the page size cap have to be repeated
 there or tests silently run on Spring's defaults.
@@ -559,7 +559,8 @@ the refund-ends-access behaviour. `ProblemDetailShapeTest` checks every error pa
 returns the same RFC 9457 shape and leaks no stack trace. `ProrationTest` pins the
 refund arithmetic at exact moments, and `ExpiryReminderJobTest` drives the scheduler's
 query and its once-only guard. `PaginationTest` checks the envelope, the size cap, and
-that pages neither overlap nor drop rows.
+that pages neither overlap nor drop rows. `ResponseShapeTest` walks every controller and
+fails if any of them returns a JPA entity instead of a DTO.
 
 ## Pagination
 
@@ -604,6 +605,21 @@ pin the API to a library version.
 **Pages are scoped, not just paged.** `/payment/me` and `/user-subscription/me` paginate
 too, so a user with thousands of payments cannot ask for all of them at once, and the
 size cap applies to the admin endpoints equally.
+
+## Response shapes
+
+Every endpoint returns a DTO record, and no endpoint returns a JPA entity. `POST /game`
+used to return the `Game` entity while everything else returned a record.
+
+Serialising an entity ties the API to the table: adding a column changes the response
+without anyone opening a controller, and a field that was never meant to be public
+becomes public by default. `User` was the near miss here — it implements `UserDetails`,
+so returning it would have published the password hash along with `isAccountNonExpired`,
+`getAuthorities` and friends.
+
+`ResponseShapeTest` enforces this structurally. It walks every `@RestController` bean in
+the context and fails if any mapped method declares an `@Entity` return type, so the
+pattern cannot come back one careless controller at a time.
 
 ## Errors
 
@@ -665,8 +681,7 @@ Honest list of what is missing, roughly in priority order:
 - **Offset pagination, not cursor pagination.** `?page=` walks an offset, so deep pages
   slow down and a row inserted mid-walk can appear on two pages. Keyset pagination needs
   stable sort keys and is the right answer for a busy table.
-- **Inconsistent response shape.** `POST /game` returns the entity while
-  everything else returns a DTO.
+- **The first admin has to be promoted by hand** with a SQL update.
 - **No CI.** A GitHub Actions workflow running the build on every push.
 - **No integration test against Postgres.** Everything runs on H2.
 

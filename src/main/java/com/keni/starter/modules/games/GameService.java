@@ -5,6 +5,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
+import com.keni.starter.modules.games.dtos.GameResponse;
 import com.keni.starter.modules.games.dtos.NewGameRequest;
 
 @Service
@@ -16,7 +17,7 @@ public class GameService {
   }
 
   @Transactional
-  public Game createGame(NewGameRequest request) {
+  public GameResponse createGame(NewGameRequest request) {
     if (gameRepository.existsByTitle(request.title())) {
       throw new ResponseStatusException(HttpStatus.CONFLICT,
           "A game with that title already exists");
@@ -28,9 +29,7 @@ public class GameService {
     game.setCompany(request.company());
     game.setDescription(request.description());
 
-    gameRepository.save(game);
-
-    return game;
+    return GameResponse.from(gameRepository.save(game));
   }
 
 }
