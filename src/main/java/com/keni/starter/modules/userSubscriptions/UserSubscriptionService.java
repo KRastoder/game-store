@@ -8,11 +8,16 @@ import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.UUID;
 
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
+
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
+import com.keni.starter.modules.common.PageResponse;
 import com.keni.starter.modules.payments.Payment;
 import com.keni.starter.modules.payments.PaymentRepository;
 import com.keni.starter.modules.payments.PaymentService;
@@ -200,15 +205,21 @@ public class UserSubscriptionService {
   }
 
   /**
-   * The payment covering the current period, which is the newest one. Older payments
-   * belong to periods that have already been served.
+   * The payment covering the current period, which is the newest completed one. Older
+   * payments belong to periods that have already been served.
+   *
+   * <p>Asked for as a single sorted row rather than every payment, so cancelling does not
+   * load a user's whole payment history into memory to pick the newest row.
    */
   private Payment latestCompletedPayment(UserSubscription userSubscription) {
-    var payments = paymentRepository.findByUserIdAndSubscriptionId(
-        userSubscription.getUser().getId(), userSubscription.getSubscription().getId());
-    return payments.stream()
+    var newestFirst = PageRequest.of(0, 1,
+        Sort.by(Sort.Direction.DESC, "datePaid"));
+    return paymentRepository
+        .findByUserIdAndSubscriptionId(userSubscription.getUser().getId(),
+            userSubscription.getSubscription().getId(), newestFirst)
+        .stream()
         .filter(p -> p.getStatus() == PaymentStatus.COMPLETED)
-        .max(java.util.Comparator.comparing(Payment::getDatePaid))
+        .findFirst()
         .orElse(null);
   }
 
@@ -224,23 +235,26 @@ public class UserSubscriptionService {
   }
 
   /** Scoped to the caller, the id never comes from the request. */
-  public List<UserSubscriptionResponse> getByUserId(UUID userId) {
+  public PageResponse<UserSubscriptionResponse> getByUserId(UUID userId, Pageable pageable) {
     var now = clock.instant();
-    return userSubscriptionRepository.findByUserId(userId).stream()
-        .map(us -> UserSubscriptionResponse.from(us, now)).toList();
+    return PageResponse.from(
+        userSubscriptionRepository.findByUserId(userId, pageable)
+            .map(us -> UserSubscriptionResponse.from(us, now)));
   }
 
   /** Admin only, guarded by SecurityConfig. */
-  public List<UserSubscriptionResponse> getAll() {
+  public PageResponse<UserSubscriptionResponse> getAll(Pageable pageable) {
     var now = clock.instant();
-    return userSubscriptionRepository.findAll().stream()
-        .map(us -> UserSubscriptionResponse.from(us, now)).toList();
+    return PageResponse.from(userSubscriptionRepository.findAll(pageable)
+        .map(us -> UserSubscriptionResponse.from(us, now)));
   }
 
   /** Admin only, who subscribed to this particular tier. */
-  public List<UserSubscriptionResponse> getBySubscriptionId(UUID subscriptionId) {
+  public PageResponse<UserSubscriptionResponse> getBySubscriptionId(UUID subscriptionId,
+      Pageable pageable) {
     var now = clock.instant();
-    return userSubscriptionRepository.findBySubscriptionId(subscriptionId).stream()
-        .map(us -> UserSubscriptionResponse.from(us, now)).toList();
+    return PageResponse.from(
+        userSubscriptionRepository.findBySubscriptionId(subscriptionId, pageable)
+            .map(us -> UserSubscriptionResponse.from(us, now)));
   }
 }

@@ -1,13 +1,15 @@
 package com.keni.starter.modules.subscriptions;
 
-import java.util.List;
 import java.util.UUID;
+
+import org.springframework.data.domain.Pageable;
 
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
+import com.keni.starter.modules.common.PageResponse;
 import com.keni.starter.modules.subscriptions.dtos.NewSubscriptionRequest;
 import com.keni.starter.modules.subscriptions.dtos.SubscriptionResponse;
 
@@ -34,8 +36,9 @@ public class SubscriptionService {
     return SubscriptionResponse.from(subscriptionRepository.save(subscription));
   }
 
-  public List<SubscriptionResponse> getAllSubscriptions() {
-    return subscriptionRepository.findAll().stream().map(SubscriptionResponse::from).toList();
+  public PageResponse<SubscriptionResponse> getAllSubscriptions(Pageable pageable) {
+    return PageResponse.from(
+        subscriptionRepository.findAll(pageable).map(SubscriptionResponse::from));
   }
 
   public SubscriptionResponse getSubscriptionById(UUID id) {

@@ -14,6 +14,8 @@ import java.util.UUID;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
@@ -44,6 +46,9 @@ import com.keni.starter.modules.userSubscriptions.dtos.SubscribeResponse;
 @SpringBootTest
 @AutoConfigureMockMvc
 class SecurityAccessTest {
+  /** Big enough that a test never has to think about paging. */
+  private static final Pageable ALL = PageRequest.of(0, 10_000);
+
 
   private static final String USER_PW = "supersecret";
   private static final String ADMIN_PW = "adminpassword";
@@ -388,7 +393,7 @@ class SecurityAccessTest {
     subscribe(userId, subscriptionId, "9.99");
 
     // reused rather than duplicated, because of the unique constraint
-    assertThat(userSubscriptionRepository.findByUserId(userId)).hasSize(1);
+    assertThat(userSubscriptionRepository.findByUserId(userId, ALL).getContent()).hasSize(1);
     assertThat(mySubscription().isActive(java.time.Instant.now())).isTrue();
     assertThat(mySubscription().getId()).isEqualTo(lapsedRow.getId());
     // a fresh period measured from today
@@ -398,10 +403,10 @@ class SecurityAccessTest {
 
   @Test
   void renewalChargesAgainWithoutCreatingASecondSubscriptionRow() throws Exception {
-    var seeded = paymentRepository.findByUserId(userId).size();
+    var seeded = paymentRepository.findByUserId(userId, ALL).getContent().size();
     subscribe(userId, subscriptionId, "9.99");
-    assertThat(paymentRepository.findByUserId(userId)).hasSize(seeded + 1);
-    assertThat(userSubscriptionRepository.findByUserId(userId)).hasSize(1);
+    assertThat(paymentRepository.findByUserId(userId, ALL).getContent()).hasSize(seeded + 1);
+    assertThat(userSubscriptionRepository.findByUserId(userId, ALL).getContent()).hasSize(1);
 
     var result = renew(userId, subscriptionId, "9.99");
 
@@ -409,9 +414,9 @@ class SecurityAccessTest {
     assertThat(result.payment().status())
         .isEqualTo(com.keni.starter.modules.payments.PaymentStatus.COMPLETED);
     // charged again...
-    assertThat(paymentRepository.findByUserId(userId)).hasSize(seeded + 2);
+    assertThat(paymentRepository.findByUserId(userId, ALL).getContent()).hasSize(seeded + 2);
     // ...but still one row, because the unique constraint holds and it was extended
-    assertThat(userSubscriptionRepository.findByUserId(userId)).hasSize(1);
+    assertThat(userSubscriptionRepository.findByUserId(userId, ALL).getContent()).hasSize(1);
   }
 
   @Test
@@ -553,7 +558,7 @@ class SecurityAccessTest {
 
   /** Statuses for this user's payments on this tier, oldest first. */
   private java.util.List<com.keni.starter.modules.payments.PaymentStatus> paymentStatuses() {
-    return paymentRepository.findByUserIdAndSubscriptionId(userId, subscriptionId).stream()
+    return paymentRepository.findByUserIdAndSubscriptionId(userId, subscriptionId, ALL).getContent().stream()
         .map(com.keni.starter.modules.payments.Payment::getStatus).toList();
   }
 
@@ -624,7 +629,7 @@ class SecurityAccessTest {
 
     assertThat(mySubscription().isActive(java.time.Instant.now())).isTrue();
     assertThat(mySubscription().getCancelledAt()).isNull();
-    assertThat(userSubscriptionRepository.findByUserId(userId)).hasSize(1);
+    assertThat(userSubscriptionRepository.findByUserId(userId, ALL).getContent()).hasSize(1);
   }
 
   // ---------------- refund ends access ----------------
@@ -665,15 +670,15 @@ class SecurityAccessTest {
 
     // the old fix would have made this a permanent 409
     var paymentsBefore = paymentRepository
-        .findByUserIdAndSubscriptionId(userId, subscriptionId).size();
+        .findByUserIdAndSubscriptionId(userId, subscriptionId, ALL).getContent().size();
     subscribe(userId, subscriptionId, "9.99");
 
     assertThat(mySubscription().getCancelledAt()).isNull();
     assertThat(mySubscription().isActive(java.time.Instant.now())).isTrue();
     // revived on the same row, so still exactly one
-    assertThat(userSubscriptionRepository.findByUserId(userId)).hasSize(1);
+    assertThat(userSubscriptionRepository.findByUserId(userId, ALL).getContent()).hasSize(1);
     // and the money really was taken again
-    assertThat(paymentRepository.findByUserIdAndSubscriptionId(userId, subscriptionId))
+    assertThat(paymentRepository.findByUserIdAndSubscriptionId(userId, subscriptionId, ALL).getContent())
         .hasSize(paymentsBefore + 1);
   }
 
@@ -691,7 +696,7 @@ class SecurityAccessTest {
   }
 
   private UUID firstPaymentId(UUID user) {
-    return paymentRepository.findByUserIdAndSubscriptionId(user, subscriptionId).stream()
+    return paymentRepository.findByUserIdAndSubscriptionId(user, subscriptionId, ALL).getContent().stream()
         .findFirst().orElseThrow().getId();
   }
 

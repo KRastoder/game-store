@@ -442,6 +442,11 @@ instead of `"userName"` gets a success response and a silently broken account.
 `spring.jackson.deserialization.fail-on-unknown-properties=true` turns that into
 a `400`.
 
+**Every list endpoint is capped, not just paginated.** A page size is a number the client
+controls, so without an upper bound `?size=1000000` is a one request denial of service.
+The cap lives in configuration, and a test asserts that an oversized request is reduced
+rather than honoured.
+
 **Errors have one shape.** Spring's default error body carries the exception class, the
 message and a full stack trace — this API was handing its entire internal call stack to
 the caller on a failed validation. `GlobalExceptionHandler` returns an RFC 9457
@@ -537,8 +542,10 @@ readable through the API.
 ./mvnw test
 ```
 
-128 tests, no database required — `src/test/resources/application.properties` points
-at an in-memory H2 so it shadows the Postgres config.
+139 tests, no database required — `src/test/resources/application.properties` points
+at an in-memory H2 so it shadows the Postgres config. That file replaces the main one
+wholesale rather than merging, so settings like the page size cap have to be repeated
+there or tests silently run on Spring's defaults.
 
 `SecurityAccessTest` covers the whole access matrix: every rule is checked from all
 three angles (no credentials, a normal user, an admin), plus the privilege
@@ -551,7 +558,52 @@ to change their role, and trying to subscribe somebody else.
 the refund-ends-access behaviour. `ProblemDetailShapeTest` checks every error path
 returns the same RFC 9457 shape and leaks no stack trace. `ProrationTest` pins the
 refund arithmetic at exact moments, and `ExpiryReminderJobTest` drives the scheduler's
-query and its once-only guard.
+query and its once-only guard. `PaginationTest` checks the envelope, the size cap, and
+that pages neither overlap nor drop rows.
+
+## Pagination
+
+Every list endpoint returns a page, not the whole table. Clients send
+`?page=`, `?size=` and `?sort=`:
+
+```bash
+curl -u root:adminpassword 'localhost:8080/subscription?page=1&size=20&sort=name,desc'
+```
+
+```json
+{
+  "content": [ { "id": "...", "name": "Gold", "price": 9.99, "durationDays": 30 } ],
+  "page": 0,
+  "size": 20,
+  "totalElements": 25,
+  "totalPages": 2,
+  "first": true,
+  "last": false,
+  "empty": false
+}
+```
+
+| Parameter | Default | Notes |
+|---|---|---|
+| `page` | `0` | zero based |
+| `size` | `20` | **capped at 100** |
+| `sort` | per endpoint | `sort=name` or `sort=name,desc` |
+
+**The size cap is the point.** Without it a single request for `?size=1000000` loads the
+entire table into memory, so `spring.data.web.pageable.max-page-size` is set to 100 and
+asked-for sizes above it are silently reduced. Spring Boot's own default is 2000, which is
+still far too generous to be safe.
+
+**This is a breaking change.** List endpoints used to return a bare JSON array; they now
+return the envelope above. Anything already consuming them needs updating.
+
+`PageResponse` is a record rather than Spring's `Page`, because `Page`'s JSON layout is an
+implementation detail that has shifted between releases — serialising it directly would
+pin the API to a library version.
+
+**Pages are scoped, not just paged.** `/payment/me` and `/user-subscription/me` paginate
+too, so a user with thousands of payments cannot ask for all of them at once, and the
+size cap applies to the admin endpoints equally.
 
 ## Errors
 
@@ -610,7 +662,9 @@ Honest list of what is missing, roughly in priority order:
   or a dedicated scheduler to be safe at scale.
 - **The first admin has to be promoted by hand** with a SQL update. A seed user or a
   `CommandLineRunner` bootstrap would be cleaner.
-- **No pagination.** Every list endpoint returns everything.
+- **Offset pagination, not cursor pagination.** `?page=` walks an offset, so deep pages
+  slow down and a row inserted mid-walk can appear on two pages. Keyset pagination needs
+  stable sort keys and is the right answer for a busy table.
 - **Inconsistent response shape.** `POST /game` returns the entity while
   everything else returns a DTO.
 - **No CI.** A GitHub Actions workflow running the build on every push.

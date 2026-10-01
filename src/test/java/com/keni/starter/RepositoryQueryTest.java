@@ -9,6 +9,8 @@ import java.util.List;
 import java.util.UUID;
 
 import org.junit.jupiter.api.Test;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.data.jpa.test.autoconfigure.DataJpaTest;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -37,6 +39,9 @@ import com.keni.starter.modules.userSubscriptions.UserSubscriptionRepository;
  */
 @DataJpaTest
 class RepositoryQueryTest {
+  /** Big enough that a test never has to think about paging. */
+  private static final Pageable ALL = PageRequest.of(0, 10_000);
+
 
   @Autowired
   private UserRepository userRepository;
@@ -127,9 +132,9 @@ class RepositoryQueryTest {
     row.setExpiresAt(Instant.now().plus(30, ChronoUnit.DAYS));
     userSubscriptionRepository.saveAndFlush(row);
 
-    assertThat(userSubscriptionRepository.findByUserId(keni.getId())).hasSize(1);
-    assertThat(userSubscriptionRepository.findByUserId(mallory.getId())).isEmpty();
-    assertThat(userSubscriptionRepository.findBySubscriptionId(gold.getId())).hasSize(1);
+    assertThat(userSubscriptionRepository.findByUserId(keni.getId(), ALL).getContent()).hasSize(1);
+    assertThat(userSubscriptionRepository.findByUserId(mallory.getId(), ALL).getContent()).isEmpty();
+    assertThat(userSubscriptionRepository.findBySubscriptionId(gold.getId(), ALL).getContent()).hasSize(1);
     assertThat(userSubscriptionRepository.findByUserIdAndSubscriptionId(keni.getId(),
         gold.getId())).isPresent();
     assertThat(
@@ -171,9 +176,9 @@ class RepositoryQueryTest {
     subscriptionGameRepository.saveAndFlush(link(gold, minecraft));
     subscriptionGameRepository.saveAndFlush(link(silver, tetris));
 
-    assertThat(subscriptionGameRepository.findBySubscriptionId(gold.getId())).hasSize(1);
-    assertThat(subscriptionGameRepository.findBySubscriptionId(silver.getId())).hasSize(1);
-    assertThat(subscriptionGameRepository.findByGameId(minecraft.getId())).hasSize(1);
+    assertThat(subscriptionGameRepository.findBySubscriptionId(gold.getId(), ALL).getContent()).hasSize(1);
+    assertThat(subscriptionGameRepository.findBySubscriptionId(silver.getId(), ALL).getContent()).hasSize(1);
+    assertThat(subscriptionGameRepository.findByGameId(minecraft.getId(), ALL).getContent()).hasSize(1);
     assertThat(subscriptionGameRepository.findBySubscriptionIdAndGameId(gold.getId(),
         minecraft.getId())).isPresent();
     assertThat(subscriptionGameRepository.findBySubscriptionIdAndGameId(gold.getId(),
@@ -199,7 +204,7 @@ class RepositoryQueryTest {
     var minecraft = game("Minecraft");
     subscriptionGameRepository.saveAndFlush(link(gold, minecraft));
     subscriptionGameRepository.saveAndFlush(link(silver, minecraft));
-    assertThat(subscriptionGameRepository.findByGameId(minecraft.getId())).hasSize(2);
+    assertThat(subscriptionGameRepository.findByGameId(minecraft.getId(), ALL).getContent()).hasSize(2);
   }
 
   @Test
@@ -212,13 +217,13 @@ class RepositoryQueryTest {
     paymentRepository.saveAndFlush(pay(keni, gold, "5.00", now.minus(10, ChronoUnit.DAYS)));
     paymentRepository.saveAndFlush(pay(mallory, gold, "7.00", now));
 
-    assertThat(paymentRepository.findByUserId(keni.getId())).hasSize(1);
-    assertThat(paymentRepository.findByUserId(mallory.getId())).hasSize(1);
-    assertThat(paymentRepository.findBySubscriptionId(gold.getId())).hasSize(2);
-    assertThat(
-        paymentRepository.findByUserIdAndSubscriptionId(keni.getId(), gold.getId())).hasSize(1);
+    assertThat(paymentRepository.findByUserId(keni.getId(), ALL).getContent()).hasSize(1);
+    assertThat(paymentRepository.findByUserId(mallory.getId(), ALL).getContent()).hasSize(1);
+    assertThat(paymentRepository.findBySubscriptionId(gold.getId(), ALL).getContent()).hasSize(2);
+    assertThat(paymentRepository.findByUserIdAndSubscriptionId(keni.getId(), gold.getId(), ALL)
+        .getContent()).hasSize(1);
     assertThat(paymentRepository.findByDatePaidBetween(now.minus(1, ChronoUnit.DAYS),
-        now.plus(1, ChronoUnit.DAYS))).hasSize(1);
+        now.plus(1, ChronoUnit.DAYS), ALL).getContent()).hasSize(1);
   }
 
   @Test

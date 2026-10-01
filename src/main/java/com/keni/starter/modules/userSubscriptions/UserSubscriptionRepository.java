@@ -5,6 +5,8 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
@@ -15,13 +17,27 @@ import jakarta.persistence.LockModeType;
 public interface UserSubscriptionRepository
     extends JpaRepository<UserSubscription, UUID> {
 
-  List<UserSubscription> findByUserId(UUID userId);
+  Page<UserSubscription> findByUserId(UUID userId, Pageable pageable);
 
-  List<UserSubscription> findBySubscriptionId(UUID subscriptionId);
+  Page<UserSubscription> findBySubscriptionId(UUID subscriptionId, Pageable pageable);
 
   Optional<UserSubscription> findByUserIdAndSubscriptionId(UUID userId, UUID subscriptionId);
 
   boolean existsByUserIdAndSubscriptionId(UUID userId, UUID subscriptionId);
+
+  /**
+   * The caller's own row for this tier, locked for update.
+   *
+   * <p>Renewal reads expiresAt, adds a period to it, and writes it back. Without the lock,
+   * two concurrent renewals both read the same expiresAt, both add one period, and the
+   * second write silently discards the first. The customer would have paid twice and
+   * received a single period, which is a customer who has to be refunded by hand.
+   */
+  @Lock(LockModeType.PESSIMISTIC_WRITE)
+  @Query("select us from UserSubscription us"
+      + " where us.user.id = :userId and us.subscription.id = :subscriptionId")
+  Optional<UserSubscription> findForRenewal(@Param("userId") UUID userId,
+      @Param("subscriptionId") UUID subscriptionId);
 
   /**
    * Locked read by primary key, so a cancel racing a renewal cannot interleave. Cancel
@@ -47,18 +63,4 @@ public interface UserSubscriptionRepository
       + " and us.expiresAt <= :before")
   List<UserSubscription> findExpiringWithoutReminder(@Param("now") Instant now,
       @Param("before") Instant before);
-
-  /**
-   * Same lookup, but takes a row level write lock.
-   *
-   * Renewal reads expiresAt, adds a period to it, and writes it back. Without the lock,
-   * two concurrent renewals both read the same expiresAt, both add one period, and the
-   * second write silently discards the first. The customer would have paid twice and
-   * received a single period, which is a customer who has to be refunded by hand.
-   */
-  @Lock(LockModeType.PESSIMISTIC_WRITE)
-  @Query("select us from UserSubscription us"
-      + " where us.user.id = :userId and us.subscription.id = :subscriptionId")
-  Optional<UserSubscription> findForRenewal(@Param("userId") UUID userId,
-      @Param("subscriptionId") UUID subscriptionId);
 }

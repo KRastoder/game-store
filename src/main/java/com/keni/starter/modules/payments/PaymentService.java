@@ -3,14 +3,16 @@ package com.keni.starter.modules.payments;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.Clock;
-import java.util.List;
 import java.util.UUID;
+
+import org.springframework.data.domain.Pageable;
 
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
+import com.keni.starter.modules.common.PageResponse;
 import com.keni.starter.modules.payments.dtos.PaymentResponse;
 import com.keni.starter.modules.payments.dtos.UpdatePaymentStatusRequest;
 import com.keni.starter.modules.userSubscriptions.UserSubscriptionRepository;
@@ -107,12 +109,13 @@ public class PaymentService {
   }
 
   /** Admin only, guarded by SecurityConfig. Shows every payment in the system. */
-  public List<PaymentResponse> getAllPayments() {
-    return paymentRepository.findAll().stream().map(PaymentResponse::from).toList();
+  public PageResponse<PaymentResponse> getAllPayments(Pageable pageable) {
+    return PageResponse.from(paymentRepository.findAll(pageable).map(PaymentResponse::from));
   }
 
   /** Scoped to the caller, the id never comes from the request. */
-  public List<PaymentResponse> getPaymentsByUserId(UUID userId) {
-    return paymentRepository.findByUserId(userId).stream().map(PaymentResponse::from).toList();
+  public PageResponse<PaymentResponse> getPaymentsByUserId(UUID userId, Pageable pageable) {
+    return PageResponse.from(
+        paymentRepository.findByUserId(userId, pageable).map(PaymentResponse::from));
   }
 }

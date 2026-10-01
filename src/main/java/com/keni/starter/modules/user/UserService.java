@@ -1,7 +1,8 @@
 package com.keni.starter.modules.user;
 
-import java.util.List;
 import java.util.UUID;
+
+import org.springframework.data.domain.Pageable;
 
 import org.springframework.http.HttpStatus;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -9,6 +10,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
+import com.keni.starter.modules.common.PageResponse;
 import com.keni.starter.modules.user.dtos.NewUserRequest;
 import com.keni.starter.modules.user.dtos.UserResponse;
 
@@ -38,8 +40,8 @@ public class UserService {
     return UserResponse.from(userRepository.save(user));
   }
 
-  public List<UserResponse> getAllUsers() {
-    return userRepository.findAll().stream().map(UserResponse::from).toList();
+  public PageResponse<UserResponse> getAllUsers(Pageable pageable) {
+    return PageResponse.from(userRepository.findAll(pageable).map(UserResponse::from));
   }
 
   public UserResponse getUserById(UUID id) {

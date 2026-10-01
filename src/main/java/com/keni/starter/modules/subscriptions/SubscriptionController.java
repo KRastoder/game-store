@@ -1,7 +1,10 @@
 package com.keni.starter.modules.subscriptions;
 
-import java.util.List;
 import java.util.UUID;
+
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
+import org.springframework.data.web.PageableDefault;
 
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -10,6 +13,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import com.keni.starter.modules.common.PageResponse;
 import com.keni.starter.modules.subscriptions.dtos.NewSubscriptionRequest;
 import com.keni.starter.modules.subscriptions.dtos.SubscriptionResponse;
 
@@ -30,8 +34,9 @@ public class SubscriptionController {
   }
 
   @GetMapping
-  public List<SubscriptionResponse> getAllSubscriptions() {
-    return subscriptionService.getAllSubscriptions();
+  public PageResponse<SubscriptionResponse> getAllSubscriptions(
+      @PageableDefault(size = 20, sort = "name") Pageable pageable) {
+    return subscriptionService.getAllSubscriptions(pageable);
   }
 
   @GetMapping("/{id}")

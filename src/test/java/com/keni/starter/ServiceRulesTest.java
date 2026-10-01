@@ -328,8 +328,10 @@ class ServiceRulesTest {
   }
 
   private Payment latestPaymentForTier() {
-    return paymentRepository.findByUserIdAndSubscriptionId(user.getId(), tier.getId()).stream()
-        .findFirst().orElseThrow();
+    return paymentRepository
+        .findByUserIdAndSubscriptionId(user.getId(), tier.getId(),
+            org.springframework.data.domain.PageRequest.of(0, 10_000))
+        .getContent().stream().findFirst().orElseThrow();
   }
 
   private Payment newPayment(PaymentStatus status) {

@@ -1,7 +1,10 @@
 package com.keni.starter.modules.userSubscriptions;
 
-import java.util.List;
 import java.util.UUID;
+
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
+import org.springframework.data.web.PageableDefault;
 
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -12,6 +15,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 
+import com.keni.starter.modules.common.PageResponse;
 import com.keni.starter.modules.user.User;
 import com.keni.starter.modules.userSubscriptions.dtos.CancelSubscriptionResponse;
 import com.keni.starter.modules.userSubscriptions.dtos.RenewRequest;
@@ -58,27 +62,31 @@ public class UserSubscriptionController {
   }
 
   @GetMapping("/me")
-  public List<UserSubscriptionResponse> getMySubscriptions(
-      @AuthenticationPrincipal User currentUser) {
-    return userSubscriptionService.getByUserId(currentUser.getId());
+  public PageResponse<UserSubscriptionResponse> getMySubscriptions(
+      @AuthenticationPrincipal User currentUser,
+      @PageableDefault(size = 20, sort = "expiresAt") Pageable pageable) {
+    return userSubscriptionService.getByUserId(currentUser.getId(), pageable);
   }
 
   /** Admin only. This is the "who bought what" view. */
   @GetMapping
-  public List<UserSubscriptionResponse> getAll() {
-    return userSubscriptionService.getAll();
+  public PageResponse<UserSubscriptionResponse> getAll(
+      @PageableDefault(size = 20, sort = "expiresAt") Pageable pageable) {
+    return userSubscriptionService.getAll(pageable);
   }
 
   /** Admin only. */
   @GetMapping("/user/{userId}")
-  public List<UserSubscriptionResponse> getByUserId(@PathVariable UUID userId) {
-    return userSubscriptionService.getByUserId(userId);
+  public PageResponse<UserSubscriptionResponse> getByUserId(@PathVariable UUID userId,
+      @PageableDefault(size = 20, sort = "expiresAt") Pageable pageable) {
+    return userSubscriptionService.getByUserId(userId, pageable);
   }
 
   /** Admin only. */
   @GetMapping("/subscription/{subscriptionId}")
-  public List<UserSubscriptionResponse> getBySubscriptionId(
-      @PathVariable UUID subscriptionId) {
-    return userSubscriptionService.getBySubscriptionId(subscriptionId);
+  public PageResponse<UserSubscriptionResponse> getBySubscriptionId(
+      @PathVariable UUID subscriptionId,
+      @PageableDefault(size = 20, sort = "expiresAt") Pageable pageable) {
+    return userSubscriptionService.getBySubscriptionId(subscriptionId, pageable);
   }
 }

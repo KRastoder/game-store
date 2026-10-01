@@ -1,13 +1,15 @@
 package com.keni.starter.modules.subscriptionGames;
 
-import java.util.List;
 import java.util.UUID;
+
+import org.springframework.data.domain.Pageable;
 
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
+import com.keni.starter.modules.common.PageResponse;
 import com.keni.starter.modules.games.GameRepository;
 import com.keni.starter.modules.subscriptionGames.dtos.NewSubscriptionGameRequest;
 import com.keni.starter.modules.subscriptionGames.dtos.SubscriptionGameResponse;
@@ -47,13 +49,15 @@ public class SubscriptionGameService {
     return SubscriptionGameResponse.from(subscriptionGameRepository.save(subscriptionGame));
   }
 
-  public List<SubscriptionGameResponse> getBySubscriptionId(UUID subscriptionId) {
-    return subscriptionGameRepository.findBySubscriptionId(subscriptionId).stream()
-        .map(SubscriptionGameResponse::from).toList();
+  public PageResponse<SubscriptionGameResponse> getBySubscriptionId(UUID subscriptionId,
+      Pageable pageable) {
+    return PageResponse.from(
+        subscriptionGameRepository.findBySubscriptionId(subscriptionId, pageable)
+            .map(SubscriptionGameResponse::from));
   }
 
-  public List<SubscriptionGameResponse> getByGameId(UUID gameId) {
-    return subscriptionGameRepository.findByGameId(gameId).stream()
-        .map(SubscriptionGameResponse::from).toList();
+  public PageResponse<SubscriptionGameResponse> getByGameId(UUID gameId, Pageable pageable) {
+    return PageResponse.from(subscriptionGameRepository.findByGameId(gameId, pageable)
+        .map(SubscriptionGameResponse::from));
   }
 }

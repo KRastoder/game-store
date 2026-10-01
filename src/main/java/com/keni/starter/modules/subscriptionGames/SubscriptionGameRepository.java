@@ -4,14 +4,16 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 
 public interface SubscriptionGameRepository
     extends JpaRepository<SubscriptionGame, UUID> {
 
-  List<SubscriptionGame> findBySubscriptionId(UUID subscriptionId);
+  Page<SubscriptionGame> findBySubscriptionId(UUID subscriptionId, Pageable pageable);
 
-  List<SubscriptionGame> findByGameId(UUID gameId);
+  Page<SubscriptionGame> findByGameId(UUID gameId, Pageable pageable);
 
   Optional<SubscriptionGame> findBySubscriptionIdAndGameId(UUID subscriptionId, UUID gameId);
 
