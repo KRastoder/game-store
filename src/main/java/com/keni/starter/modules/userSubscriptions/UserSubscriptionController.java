@@ -12,7 +12,8 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.keni.starter.modules.user.User;
-import com.keni.starter.modules.userSubscriptions.dtos.NewUserSubscriptionRequest;
+import com.keni.starter.modules.userSubscriptions.dtos.SubscribeRequest;
+import com.keni.starter.modules.userSubscriptions.dtos.SubscribeResponse;
 import com.keni.starter.modules.userSubscriptions.dtos.UserSubscriptionResponse;
 
 import jakarta.validation.Valid;
@@ -26,9 +27,10 @@ public class UserSubscriptionController {
     this.userSubscriptionService = userSubscriptionService;
   }
 
+  /** Any signed in user. Creates the subscription and its payment together. */
   @PostMapping
-  public UserSubscriptionResponse subscribe(@AuthenticationPrincipal User currentUser,
-      @Valid @RequestBody NewUserSubscriptionRequest request) {
+  public SubscribeResponse subscribe(@AuthenticationPrincipal User currentUser,
+      @Valid @RequestBody SubscribeRequest request) {
     return userSubscriptionService.subscribe(currentUser, request);
   }
 

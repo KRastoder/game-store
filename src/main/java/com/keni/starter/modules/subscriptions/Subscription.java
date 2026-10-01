@@ -32,4 +32,8 @@ public class Subscription {
   @Column(name = "price", nullable = false)
   private BigDecimal price;
 
+  /** How long a subscription to this tier lasts, used to work out expiresAt. */
+  @Column(name = "duration_days", nullable = false)
+  private int durationDays;
+
 }

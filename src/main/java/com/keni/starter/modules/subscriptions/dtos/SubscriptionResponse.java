@@ -11,10 +11,11 @@ import com.keni.starter.modules.subscriptions.Subscription;
 public record SubscriptionResponse(
     UUID id,
     String name,
-    BigDecimal price) {
+    BigDecimal price,
+    int durationDays) {
 
   public static SubscriptionResponse from(Subscription subscription) {
     return new SubscriptionResponse(subscription.getId(), subscription.getName(),
-        subscription.getPrice());
+        subscription.getPrice(), subscription.getDurationDays());
   }
 }

@@ -22,8 +22,10 @@ import org.springframework.test.web.servlet.MockMvc;
 
 import com.keni.starter.modules.payments.PaymentRepository;
 import com.keni.starter.modules.payments.PaymentStatus;
+import com.keni.starter.modules.games.GameRepository;
 import com.keni.starter.modules.subscriptions.Subscription;
 import com.keni.starter.modules.subscriptions.SubscriptionRepository;
+import com.keni.starter.modules.subscriptionGames.SubscriptionGameRepository;
 import com.keni.starter.modules.user.Role;
 import com.keni.starter.modules.user.User;
 import com.keni.starter.modules.user.UserRepository;
@@ -52,6 +54,10 @@ class SecurityAccessTest {
   @Autowired
   private UserSubscriptionRepository userSubscriptionRepository;
   @Autowired
+  private SubscriptionGameRepository subscriptionGameRepository;
+  @Autowired
+  private GameRepository gameRepository;
+  @Autowired
   private PasswordEncoder encoder;
 
 
@@ -63,6 +69,10 @@ class SecurityAccessTest {
 
   @BeforeEach
   void setUp() {
+    // Every @SpringBootTest class shares one cached context and therefore one database,
+    // so each class has to clear all the tables it touches, not just its own.
+    subscriptionGameRepository.deleteAll();
+    gameRepository.deleteAll();
     userSubscriptionRepository.deleteAll();
     paymentRepository.deleteAll();
     subscriptionRepository.deleteAll();
@@ -78,6 +88,7 @@ class SecurityAccessTest {
     var subscription = new Subscription();
     subscription.setName("Gold");
     subscription.setPrice(new BigDecimal("9.99"));
+    subscription.setDurationDays(30);
     subscriptionId = subscriptionRepository.save(subscription).getId();
 
     var myPayment = paymentRepository
@@ -264,19 +275,75 @@ class SecurityAccessTest {
   void userSubscribesThemselves() throws Exception {
     mvc.perform(post("/user-subscription").with(httpBasic("keni", USER_PW))
         .contentType(MediaType.APPLICATION_JSON)
-        .content("{\"subscriptionId\":\"" + subscriptionId + "\"}"))
+        .content(subscribeBody(userId, subscriptionId, "9.99")))
         .andExpect(status().isOk())
-        .andExpect(jsonPath("$.userId").value(userId.toString()));
+        .andExpect(jsonPath("$.userSubscription.userId").value(userId.toString()))
+        .andExpect(jsonPath("$.userSubscription.subscriptionId")
+            .value(subscriptionId.toString()))
+        // a tier with a duration now gets a real expiry instead of null
+        .andExpect(jsonPath("$.userSubscription.expiresAt").isNotEmpty())
+        .andExpect(jsonPath("$.payment.amount").value(9.99))
+        .andExpect(jsonPath("$.payment.userId").value(userId.toString()));
+  }
+
+  @Test
+  void userCannotSubscribeTwiceWhileActive() throws Exception {
+    var body = subscribeBody(userId, subscriptionId, "9.99");
+    mvc.perform(post("/user-subscription").with(httpBasic("keni", USER_PW))
+        .contentType(MediaType.APPLICATION_JSON).content(body))
+        .andExpect(status().isOk());
+    mvc.perform(post("/user-subscription").with(httpBasic("keni", USER_PW))
+        .contentType(MediaType.APPLICATION_JSON).content(body))
+        .andExpect(status().isConflict());
+  }
+
+  @Test
+  void lapsedSubscriptionStillBlocksResubscribeBecauseOfTheUniqueConstraint() throws Exception {
+    var keni = userRepository.findById(userId).orElseThrow();
+    var tier = subscriptionRepository.findById(subscriptionId).orElseThrow();
+
+    var lapsed = new com.keni.starter.modules.userSubscriptions.UserSubscription();
+    lapsed.setUser(keni);
+    lapsed.setSubscription(tier);
+    lapsed.setStartedAt(java.time.Instant.now().minus(java.time.Duration.ofDays(60)));
+    lapsed.setExpiresAt(java.time.Instant.now().minus(java.time.Duration.ofDays(30)));
+    userSubscriptionRepository.save(lapsed);
+
+    // The table has a unique constraint on (user_id, subscription_id), so one row per
+    // tier per user is permanent. Renewal is not supported yet.
+    mvc.perform(post("/user-subscription").with(httpBasic("keni", USER_PW))
+        .contentType(MediaType.APPLICATION_JSON)
+        .content(subscribeBody(userId, subscriptionId, "9.99")))
+        .andExpect(status().isConflict());
   }
 
   @Test
   void userCannotSubscribeSomebodyElse() throws Exception {
-    // userId is no longer part of the request at all, so this must not be accepted
     mvc.perform(post("/user-subscription").with(httpBasic("keni", USER_PW))
         .contentType(MediaType.APPLICATION_JSON)
-        .content("{\"subscriptionId\":\"" + subscriptionId + "\",\"userId\":\""
-            + otherUserId + "\"}"))
+        .content(subscribeBody(otherUserId, subscriptionId, "9.99")))
+        .andExpect(status().isForbidden());
+  }
+
+  @Test
+  void userCannotUnderpayForATier() throws Exception {
+    mvc.perform(post("/user-subscription").with(httpBasic("keni", USER_PW))
+        .contentType(MediaType.APPLICATION_JSON)
+        .content(subscribeBody(userId, subscriptionId, "0.01")))
         .andExpect(status().isBadRequest());
+  }
+
+  @Test
+  void unknownTierIsNotFound() throws Exception {
+    mvc.perform(post("/user-subscription").with(httpBasic("keni", USER_PW))
+        .contentType(MediaType.APPLICATION_JSON)
+        .content(subscribeBody(userId, UUID.randomUUID(), "9.99")))
+        .andExpect(status().isNotFound());
+  }
+
+  private String subscribeBody(UUID user, UUID subscription, String amount) {
+    return "{\"subscriptionId\":\"" + subscription + "\",\"userId\":\"" + user
+        + "\",\"amount\":" + amount + "}";
   }
 
   // ---------------- browsing the catalogue is fine for everyone ----------------
@@ -292,7 +359,7 @@ class SecurityAccessTest {
   void userCannotCreateSubscriptionTier() throws Exception {
     mvc.perform(post("/subscription").with(httpBasic("keni", USER_PW))
         .contentType(MediaType.APPLICATION_JSON)
-        .content("{\"name\":\"Platinum\",\"price\":\"19.99\"}"))
+        .content("{\"name\":\"Platinum\",\"price\":\"19.99\",\"durationDays\":30}"))
         .andExpect(status().isForbidden());
   }
 

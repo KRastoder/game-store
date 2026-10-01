@@ -29,6 +29,7 @@ public class SubscriptionService {
     var subscription = new Subscription();
     subscription.setName(request.name());
     subscription.setPrice(request.price());
+    subscription.setDurationDays(request.durationDays());
 
     return SubscriptionResponse.from(subscriptionRepository.save(subscription));
   }

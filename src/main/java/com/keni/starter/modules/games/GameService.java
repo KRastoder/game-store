@@ -1,7 +1,9 @@
 package com.keni.starter.modules.games;
 
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
-import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.server.ResponseStatusException;
 
 import com.keni.starter.modules.games.dtos.NewGameRequest;
 
@@ -13,11 +15,15 @@ public class GameService {
     this.gameRepository = gameRepository;
   }
 
-  @PostMapping("/")
+  @Transactional
   public Game createGame(NewGameRequest request) {
-    var game = new Game();
+    if (gameRepository.existsByTitle(request.title())) {
+      throw new ResponseStatusException(HttpStatus.CONFLICT,
+          "A game with that title already exists");
+    }
 
     // Manual mapping xd
+    var game = new Game();
     game.setTitle(request.title());
     game.setCompany(request.company());
     game.setDescription(request.description());

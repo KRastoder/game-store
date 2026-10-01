@@ -52,6 +52,11 @@ public class PaymentService {
     var payment = paymentRepository.findById(id)
         .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Payment not found"));
 
+    if (!payment.getStatus().canTransitionTo(request.status())) {
+      throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+          "Cannot move a payment from " + payment.getStatus() + " to " + request.status());
+    }
+
     payment.setStatus(request.status());
 
     return PaymentResponse.from(payment);

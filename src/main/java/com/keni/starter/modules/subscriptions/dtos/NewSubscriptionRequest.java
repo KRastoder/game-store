@@ -2,6 +2,7 @@ package com.keni.starter.modules.subscriptions.dtos;
 
 import java.math.BigDecimal;
 
+import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Positive;
@@ -11,5 +12,6 @@ import jakarta.validation.constraints.Positive;
  */
 public record NewSubscriptionRequest(
     @NotBlank String name,
-    @NotNull @Positive BigDecimal price) {
+    @NotNull @Positive BigDecimal price,
+    @Min(1) int durationDays) {
 }
