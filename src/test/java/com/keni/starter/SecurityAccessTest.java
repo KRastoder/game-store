@@ -29,8 +29,10 @@ import com.keni.starter.modules.subscriptions.Subscription;
 import com.keni.starter.modules.subscriptions.SubscriptionRepository;
 import com.keni.starter.modules.subscriptionGames.SubscriptionGameRepository;
 import com.keni.starter.modules.user.Role;
+import com.keni.starter.modules.user.Role;
 import com.keni.starter.modules.user.User;
 import com.keni.starter.modules.user.UserRepository;
+import com.keni.starter.modules.user.dtos.NewUserRequest;
 import com.keni.starter.modules.userSubscriptions.UserSubscriptionRepository;
 import com.keni.starter.modules.userSubscriptions.dtos.SubscribeResponse;
 
@@ -63,6 +65,8 @@ class SecurityAccessTest {
   private SubscriptionGameRepository subscriptionGameRepository;
   @Autowired
   private GameRepository gameRepository;
+  @Autowired
+  private com.keni.starter.modules.user.UserService userService;
   @Autowired
   private PasswordEncoder encoder;
 
@@ -566,6 +570,88 @@ class SecurityAccessTest {
   private UUID firstPaymentId(UUID user) {
     return paymentRepository.findByUserIdAndSubscriptionId(user, subscriptionId).stream()
         .findFirst().orElseThrow().getId();
+  }
+
+  // ---------------- registration can only ever produce USER ----------------
+
+  @Test
+  void registrationIgnoresEveryWayOfAskingForAdmin() throws Exception {
+    // each of these is either an unknown field (400) or plain ignored, never an ADMIN
+    var attempts = new String[] {
+        "{\"userName\":\"a1\",\"password\":\"supersecret\",\"role\":\"ADMIN\"}",
+        "{\"userName\":\"a2\",\"password\":\"supersecret\",\"Role\":\"ADMIN\"}",
+        "{\"userName\":\"a3\",\"password\":\"supersecret\",\"ROLE\":\"ADMIN\"}",
+        "{\"userName\":\"a4\",\"password\":\"supersecret\",\"authorities\":[\"ROLE_ADMIN\"]}",
+        "{\"userName\":\"a5\",\"password\":\"supersecret\",\"id\":\"11111111-1111-1111-1111-111111111111\"}",
+        "{\"userName\":\"a6\",\"password\":\"supersecret\",\"enabled\":false}",
+        "{\"userName\":\"a7\",\"password\":\"supersecret\",\"accountNonLocked\":true}",
+    };
+
+    for (var body : attempts) {
+      var status = mvc.perform(post("/user").contentType(MediaType.APPLICATION_JSON).content(body))
+          .andReturn().getResponse().getStatus();
+      assertThat(status).as("body %s", body).isEqualTo(400);
+    }
+
+    // none of the seven names above was ever created, so nothing escalated
+    for (var name : new String[] {"a1", "a2", "a3", "a4", "a5", "a6", "a7"}) {
+      assertThat(userRepository.findByUserName(name)).as(name).isEmpty();
+    }
+  }
+
+  @Test
+  void registeredUserIsStoredAsUserNotAdmin() throws Exception {
+    // a well formed request, so the user really is created, and the stored role is USER
+    mvc.perform(post("/user").contentType(MediaType.APPLICATION_JSON)
+        .content("{\"userName\":\"plain\",\"password\":\"supersecret\"}"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.role").value("USER"));
+
+    var stored = userRepository.findByUserName("plain").orElseThrow();
+    assertThat(stored.getRole()).isEqualTo(Role.USER);
+    assertThat(stored.getAuthorities()).extracting(Object::toString)
+        .containsExactly("ROLE_USER");
+  }
+
+  @Test
+  void everyRegistrationRouteProducesUserOnly() throws Exception {
+    // the only creation path is POST /user, and it always lands on USER
+    for (int i = 0; i < 3; i++) {
+      mvc.perform(post("/user").contentType(MediaType.APPLICATION_JSON)
+          .content("{\"userName\":\"bulk" + i + "\",\"password\":\"supersecret\"}"))
+          .andExpect(status().isOk())
+          .andExpect(jsonPath("$.role").value("USER"));
+    }
+    assertThat(userRepository.findAll())
+        .allMatch(u -> u.getRole() != null);
+    assertThat(userRepository.findAll().stream()
+        .filter(u -> u.getRole() == Role.USER).count()).isGreaterThanOrEqualTo(3L);
+  }
+
+  @Test
+  void noEndpointCanChangeAnExistingUsersRole() throws Exception {
+    userService.createUser(new NewUserRequest("victim", "supersecret"));
+    var victimId = userRepository.findByUserName("victim").orElseThrow().getId();
+
+    // the admin has no user-editing route either, so PUT/PATCH/DELETE must not exist
+    for (var method : new String[] {"PUT", "PATCH", "DELETE"}) {
+      var request = org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+          .request(org.springframework.http.HttpMethod.valueOf(method), "/user/" + victimId)
+          .with(httpBasic("root", ADMIN_PW)).contentType(MediaType.APPLICATION_JSON)
+          .content("{\"role\":\"ADMIN\"}");
+      var status = mvc.perform(request).andReturn().getResponse().getStatus();
+      assertThat(status).as(method + " /user/{id}").isEqualTo(405);
+    }
+
+    assertThat(userRepository.findById(victimId).orElseThrow().getRole()).isEqualTo(Role.USER);
+  }
+
+  @Test
+  void adminCannotGrantAdminThroughTheApi() throws Exception {
+    // there is no role endpoint of any kind, so even an admin has to use SQL
+    mvc.perform(patch("/user/" + adminId).with(httpBasic("root", ADMIN_PW))
+        .contentType(MediaType.APPLICATION_JSON).content("{\"role\":\"ADMIN\"}"))
+        .andExpect(status().isMethodNotAllowed());
   }
 
   private String subscribeBody(UUID user, UUID subscription, String amount) {

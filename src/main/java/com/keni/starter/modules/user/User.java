@@ -4,6 +4,7 @@ import java.util.Collection;
 import java.util.List;
 import java.util.UUID;
 
+import org.hibernate.annotations.ColumnDefault;
 import org.jspecify.annotations.Nullable;
 import org.springframework.security.core.GrantedAuthority;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
@@ -39,6 +40,7 @@ public class User implements UserDetails {
   private String password;
 
   @Enumerated(EnumType.STRING)
+  @ColumnDefault("'USER'")
   @Column(name = "role", nullable = false)
   private Role role;
 

@@ -98,7 +98,8 @@ There are exactly two roles.
 
 Every new registration is forced to `USER`. The create-user request has **no role
 field at all**, and unknown JSON fields are rejected, so nobody can self-register
-as an admin.
+as an admin. There is no user-editing endpoint either, so an admin cannot promote
+anyone through the API — promotion is a database operation, deliberately.
 
 ### Making the first admin
 
@@ -436,9 +437,14 @@ the request if it disagrees with `Subscription.price` and then stores the tier's
 own price. Taking the client's number at face value would mean a €9.99 tier is
 available for €0.01.
 
-**Registration cannot grant itself a role.** `NewUserRequest` has no role field,
-`UserService` hardcodes `Role.USER`, and unknown JSON fields are rejected — so
-posting `"role":"ADMIN"` is a `400`, not a silent privilege escalation.
+**Registration cannot grant a role, and nothing else can either.** `NewUserRequest`
+has no `role` field, `UserService` hardcodes `Role.USER`, and unknown JSON fields are
+rejected — so `"role":"ADMIN"` is a `400`, not a silent escalation. There is also no
+`PUT`/`PATCH`/`DELETE` on `/user/{id}`, so **no endpoint, admin included, can change
+an existing user's role.** Every `ADMIN` comes from the SQL promotion step above.
+
+The database backs this up too: `role` is `NOT NULL DEFAULT 'USER'`, so a row that
+somehow skipped the application still lands as a plain user.
 
 **Role rules live in `SecurityConfig`, ordered most specific first.** Request
 matchers are evaluated top to bottom and the first hit wins, so every `/me` rule
@@ -460,13 +466,18 @@ readable through the API.
 ./mvnw test
 ```
 
-29 tests, no database required — `src/test/resources/application.properties` points
+87 tests, no database required — `src/test/resources/application.properties` points
 at an in-memory H2 so it shadows the Postgres config.
 
 `SecurityAccessTest` covers the whole access matrix: every rule is checked from all
 three angles (no credentials, a normal user, an admin), plus the privilege
-escalation attempts — registering with `"role":"ADMIN"`, and trying to subscribe
-another user.
+escalation attempts — registering with `"role":"ADMIN"` in several spellings and
+casings, sending `authorities` or `enabled`, trying to `PUT`/`PATCH`/`DELETE` a user
+to change their role, and trying to subscribe somebody else.
+
+`RepositoryQueryTest` exercises every derived query and database constraint.
+`ServiceRulesTest` covers the business rules, including the payment state machine and
+the refund-ends-access behaviour.
 
 ## Not done yet
 
@@ -511,3 +522,5 @@ Change the host side of the mapping in `docker-compose.yml`, e.g. `"5433:5432"`.
 **Forgot a column when changing an entity**
 `ddl-auto=update` adds columns but will not remove them. If you want a clean
 schema during development: `docker compose down -v && docker compose up --build`.
+
+
