@@ -409,6 +409,13 @@ instead of `"userName"` gets a success response and a silently broken account.
 `spring.jackson.deserialization.fail-on-unknown-properties=true` turns that into
 a `400`.
 
+**Errors have one shape.** Spring's default error body carries the exception class, the
+message and a full stack trace — this API was handing its entire internal call stack to
+the caller on a failed validation. `GlobalExceptionHandler` returns an RFC 9457
+`ProblemDetail` instead, so clients can rely on one structure and no internal class name
+or line number is ever sent out. `401` and `403` are written by hand in `SecurityConfig`,
+because they happen before any controller exists to throw.
+
 **Own data is identified from the token, not from the request.** The first cut of
 this API had `GET /payment/user/{userId}` and `GET /user-subscription/user/{userId}`,
 and any signed in user could swap in someone else's id. Accepting an identifier
@@ -497,7 +504,7 @@ readable through the API.
 ./mvnw test
 ```
 
-95 tests, no database required — `src/test/resources/application.properties` points
+106 tests, no database required — `src/test/resources/application.properties` points
 at an in-memory H2 so it shadows the Postgres config.
 
 `SecurityAccessTest` covers the whole access matrix: every rule is checked from all
@@ -508,7 +515,51 @@ to change their role, and trying to subscribe somebody else.
 
 `RepositoryQueryTest` exercises every derived query and database constraint.
 `ServiceRulesTest` covers the business rules, including the payment state machine and
-the refund-ends-access behaviour.
+the refund-ends-access behaviour. `ProblemDetailShapeTest` checks every error path
+returns the same RFC 9457 shape and leaks no stack trace.
+
+## Errors
+
+Every failure returns an RFC 9457 problem document with the same shape, whatever
+caused it:
+
+```json
+{
+  "type": "about:blank",
+  "title": "Validation failed",
+  "status": 400,
+  "detail": "One or more fields are invalid.",
+  "instance": "/user",
+  "errors": { "userName": "must not be blank" }
+}
+```
+
+| Status | When |
+|---|---|
+| `400` | `@Valid` failure, malformed body, unknown field, price mismatch |
+| `401` | no credentials, or wrong credentials |
+| `403` | signed in, but not allowed — or cancelling someone else's subscription |
+| `404` | no such row, or no such route |
+| `405` | wrong HTTP method on a real route |
+| `409` | duplicate username, duplicate game title, already subscribed, illegal payment transition |
+| `500` | unhandled, logged in full, generic message to the caller |
+
+**No stack traces reach the client.** Spring's default error body includes the exception
+class, the message and a full trace — this API was returning its entire internal call
+stack on a failed validation, naming every class and line number. `GlobalExceptionHandler`
+replaces that, and `ProblemDetailShapeTest` asserts no response body ever contains
+`at com.keni`, `Exception`, or a `java.base` frame.
+
+**Validation errors name the field.** `errors` maps each rejected field to its message,
+so a client can highlight the exact inputs instead of parsing a sentence.
+
+**Rejected bodies are never echoed.** A malformed request could contain a password, so
+the reason stays generic rather than quoting what was sent.
+
+**401 and 403 are written by hand in `SecurityConfig`.** They are raised before any
+controller runs, so `@RestControllerAdvice` never sees them. Note that `.httpBasic()`
+installs its own entry point, which wins over `.exceptionHandling()` and would leave the
+body empty — the custom entry point is configured *inside* `httpBasic` for that reason.
 
 ## Not done yet
 
@@ -523,8 +574,6 @@ Honest list of what is missing, roughly in priority order:
 - **The first admin has to be promoted by hand** with a SQL update. A seed user or a
   `CommandLineRunner` bootstrap would be cleaner.
 - **No pagination.** Every list endpoint returns everything.
-- **No global exception handler.** Services throw `ResponseStatusException`, which
-  works, but a `@RestControllerAdvice` returning `ProblemDetail` would be better.
 - **Inconsistent response shape.** `POST /game` returns the entity while
   everything else returns a DTO.
 - **No CI.** A GitHub Actions workflow running the build on every push.
