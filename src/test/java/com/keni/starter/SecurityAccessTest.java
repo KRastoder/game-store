@@ -2,9 +2,11 @@ package com.keni.starter;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.httpBasic;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -131,6 +133,27 @@ class SecurityAccessTest {
     return payment;
   }
 
+  private com.keni.starter.modules.games.Game newGame(String title) {
+    var game = new com.keni.starter.modules.games.Game();
+    game.setTitle(title);
+    game.setCompany("Mojang");
+    game.setDescription("blocks");
+    return gameRepository.saveAndFlush(game);
+  }
+
+  private String gameBody(String title, String company) {
+    return "{\"title\":\"" + title + "\",\"description\":\"blocks\",\"company\":\"" + company
+        + "\"}";
+  }
+
+  /** Puts a game into the Gold tier, which is what makes it undeletable. */
+  private void attachGameToTier(com.keni.starter.modules.games.Game game) {
+    var row = new com.keni.starter.modules.subscriptionGames.SubscriptionGame();
+    row.setSubscription(subscriptionRepository.findById(subscriptionId).orElseThrow());
+    row.setGame(game);
+    subscriptionGameRepository.saveAndFlush(row);
+  }
+
   // ---------------- game creation is admin only ----------------
 
   @Test
@@ -154,6 +177,128 @@ class SecurityAccessTest {
         .contentType(MediaType.APPLICATION_JSON)
         .content("{\"title\":\"Minecraft\",\"description\":\"blocks\",\"company\":\"Mojang\"}"))
         .andExpect(status().isOk());
+  }
+
+  // ---------------- browsing games is open, changing them is not ----------------
+
+  @Test
+  void anyUserCanBrowseGames() throws Exception {
+    // browsing the catalogue is what a customer does before subscribing, so it is not
+    // an admin only route
+    newGame("Minecraft");
+
+    mvc.perform(get("/game").with(httpBasic("keni", USER_PW)))
+        .andExpect(status().isOk())
+        .andExpect(content().string(org.hamcrest.Matchers.containsString("Minecraft")));
+
+    mvc.perform(get("/game").with(httpBasic("root", ADMIN_PW)))
+        .andExpect(status().isOk());
+  }
+
+  @Test
+  void anyUserCanReadOneGame() throws Exception {
+    var minecraft = newGame("Minecraft");
+
+    mvc.perform(get("/game/" + minecraft.getId()).with(httpBasic("keni", USER_PW)))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.title").value("Minecraft"));
+  }
+
+  @Test
+  void anonymousCannotBrowseGames() throws Exception {
+    mvc.perform(get("/game")).andExpect(status().isUnauthorized());
+    mvc.perform(get("/game/" + UUID.randomUUID())).andExpect(status().isUnauthorized());
+  }
+
+  @Test
+  void normalUserCannotUpdateGame() throws Exception {
+    var minecraft = newGame("Minecraft");
+
+    mvc.perform(put("/game/" + minecraft.getId()).with(httpBasic("keni", USER_PW))
+        .contentType(MediaType.APPLICATION_JSON)
+        .content(gameBody("Minecraft", "Not Mojang")))
+        .andExpect(status().isForbidden());
+
+    // refused, so the catalogue is untouched
+    assertThat(gameRepository.findById(minecraft.getId()).orElseThrow().getCompany())
+        .isEqualTo("Mojang");
+  }
+
+  @Test
+  void anonymousCannotUpdateGame() throws Exception {
+    var minecraft = newGame("Minecraft");
+
+    mvc.perform(put("/game/" + minecraft.getId()).contentType(MediaType.APPLICATION_JSON)
+        .content(gameBody("Minecraft", "Not Mojang")))
+        .andExpect(status().isUnauthorized());
+  }
+
+  @Test
+  void adminCanUpdateGame() throws Exception {
+    var minecraft = newGame("Minecraft");
+
+    mvc.perform(put("/game/" + minecraft.getId()).with(httpBasic("root", ADMIN_PW))
+        .contentType(MediaType.APPLICATION_JSON)
+        .content(gameBody("Minecraft Deluxe", "Mojang Studios")))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.id").value(minecraft.getId().toString()))
+        .andExpect(jsonPath("$.title").value("Minecraft Deluxe"))
+        .andExpect(jsonPath("$.company").value("Mojang Studios"));
+  }
+
+  @Test
+  void updatingAGameToATitleThatAlreadyExistsIsAConflict() throws Exception {
+    var minecraft = newGame("Minecraft");
+    newGame("Tetris");
+
+    mvc.perform(put("/game/" + minecraft.getId()).with(httpBasic("root", ADMIN_PW))
+        .contentType(MediaType.APPLICATION_JSON)
+        .content(gameBody("Tetris", "Mojang")))
+        .andExpect(status().isConflict());
+  }
+
+  @Test
+  void normalUserCannotDeleteGame() throws Exception {
+    var minecraft = newGame("Minecraft");
+
+    mvc.perform(delete("/game/" + minecraft.getId()).with(httpBasic("keni", USER_PW)))
+        .andExpect(status().isForbidden());
+
+    assertThat(gameRepository.findById(minecraft.getId())).isPresent();
+  }
+
+  @Test
+  void anonymousCannotDeleteGame() throws Exception {
+    var minecraft = newGame("Minecraft");
+
+    mvc.perform(delete("/game/" + minecraft.getId()))
+        .andExpect(status().isUnauthorized());
+
+    assertThat(gameRepository.findById(minecraft.getId())).isPresent();
+  }
+
+  @Test
+  void adminCanDeleteGame() throws Exception {
+    var minecraft = newGame("Minecraft");
+
+    mvc.perform(delete("/game/" + minecraft.getId()).with(httpBasic("root", ADMIN_PW)))
+        .andExpect(status().isNoContent());
+
+    assertThat(gameRepository.findById(minecraft.getId())).isEmpty();
+    mvc.perform(get("/game/" + minecraft.getId()).with(httpBasic("root", ADMIN_PW)))
+        .andExpect(status().isNotFound());
+  }
+
+  @Test
+  void deletingAGameThatIsStillInATierIsAConflict() throws Exception {
+    var minecraft = newGame("Minecraft");
+    // customers have paid for this tier, so the game cannot vanish from underneath them
+    attachGameToTier(minecraft);
+
+    mvc.perform(delete("/game/" + minecraft.getId()).with(httpBasic("root", ADMIN_PW)))
+        .andExpect(status().isConflict());
+
+    assertThat(gameRepository.findById(minecraft.getId())).isPresent();
   }
 
   // ---------------- registration is open, but cannot grant yourself a role -------

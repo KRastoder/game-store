@@ -15,6 +15,12 @@ public interface SubscriptionGameRepository
 
   Page<SubscriptionGame> findByGameId(UUID gameId, Pageable pageable);
 
+  /**
+   * How many tiers list this game. A count rather than a boolean because the delete
+   * refusal can then tell the admin how much has to be taken off first.
+   */
+  long countByGameId(UUID gameId);
+
   Optional<SubscriptionGame> findBySubscriptionIdAndGameId(UUID subscriptionId, UUID gameId);
 
   boolean existsBySubscriptionIdAndGameId(UUID subscriptionId, UUID gameId);

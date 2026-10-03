@@ -141,7 +141,7 @@ Lombok · JUnit 5 + Mockito
 
 ```bash
 docker compose up --build     # postgres + app on :8080
-./mvnw test                   # 142 tests, no database needed
+./mvnw test                   # 166 tests, no database needed
 ```
 
 Or point it at your own Postgres and run `./mvnw spring-boot:run`.
@@ -164,7 +164,10 @@ docker compose exec db psql -U keni -d game_renting \
 | `GET` | `/user`, `/user/{id}` | admin |
 | `GET` | `/subscription` | any user |
 | `POST` | `/subscription` | admin |
+| `GET` | `/game`, `/game/{id}` | any user |
 | `POST` | `/game` | admin |
+| `PUT` | `/game/{id}` | admin, `409` on a duplicate title |
+| `DELETE` | `/game/{id}` | admin, `409` while a tier still lists it |
 | `POST` | `/subscription-game` | admin |
 | `GET` | `/subscription-game/{...}` | any user |
 | `POST` | `/user-subscription` | **subscribes self + pays** |
@@ -185,6 +188,14 @@ List endpoints return an envelope, not a bare array:
 
 The size cap matters: page size is client-controlled, so without a bound
 `?size=1000000` is a one-request denial of service. Spring Boot's own default is 2000.
+
+`PUT /game/{id}` replaces rather than patches, so `title` and `company` are required and
+omitting `description` really does clear it. The duplicate title check skips the row being
+edited, otherwise saving a game without renaming it would look like a clash with itself.
+
+`DELETE /game/{id}` answers `409` while the game is still listed in any tier. A tier is
+something customers have paid for, so removing the row would take the game out of their
+access silently; it has to come off the tiers first.
 
 ## Errors
 

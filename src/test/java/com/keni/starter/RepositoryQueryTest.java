@@ -114,9 +114,16 @@ class RepositoryQueryTest {
 
   @Test
   void gameRepositoryFinders() {
-    game("Minecraft");
+    var minecraft = game("Minecraft");
+    game("Tetris");
+
     assertThat(gameRepository.existsByTitle("Minecraft")).isTrue();
-    assertThat(gameRepository.existsByTitle("Tetris")).isFalse();
+    assertThat(gameRepository.existsByTitle("Portal")).isFalse();
+
+    // the update check has to ignore the row being edited, or it clashes with itself
+    assertThat(gameRepository.existsByTitleAndIdNot("Minecraft", minecraft.getId())).isFalse();
+    assertThat(gameRepository.existsByTitleAndIdNot("Tetris", minecraft.getId())).isTrue();
+    assertThat(gameRepository.existsByTitleAndIdNot("Portal", minecraft.getId())).isFalse();
   }
 
   @Test
@@ -187,6 +194,11 @@ class RepositoryQueryTest {
         minecraft.getId())).isTrue();
     assertThat(subscriptionGameRepository.existsBySubscriptionIdAndGameId(gold.getId(),
         tetris.getId())).isFalse();
+
+    // what the delete guard reads: zero means the game is safe to remove
+    assertThat(subscriptionGameRepository.countByGameId(minecraft.getId())).isEqualTo(1);
+    assertThat(subscriptionGameRepository.countByGameId(tetris.getId())).isEqualTo(1);
+    assertThat(subscriptionGameRepository.countByGameId(UUID.randomUUID())).isZero();
   }
 
   @Test
@@ -205,6 +217,7 @@ class RepositoryQueryTest {
     subscriptionGameRepository.saveAndFlush(link(gold, minecraft));
     subscriptionGameRepository.saveAndFlush(link(silver, minecraft));
     assertThat(subscriptionGameRepository.findByGameId(minecraft.getId(), ALL).getContent()).hasSize(2);
+    assertThat(subscriptionGameRepository.countByGameId(minecraft.getId())).isEqualTo(2);
   }
 
   @Test

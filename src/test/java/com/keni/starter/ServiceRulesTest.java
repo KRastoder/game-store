@@ -18,6 +18,7 @@ import com.keni.starter.modules.games.Game;
 import com.keni.starter.modules.games.GameRepository;
 import com.keni.starter.modules.games.GameService;
 import com.keni.starter.modules.games.dtos.NewGameRequest;
+import com.keni.starter.modules.games.dtos.UpdateGameRequest;
 import com.keni.starter.modules.payments.Payment;
 import com.keni.starter.modules.payments.PaymentRepository;
 import com.keni.starter.modules.payments.PaymentService;
@@ -109,6 +110,138 @@ class ServiceRulesTest {
   void differentTitlesAreBothAllowed() {
     gameService.createGame(new NewGameRequest("Tetris", "blocks", "Someone"));
     assertThat(gameRepository.findAll()).hasSize(2);
+  }
+
+  // ---------------- reading games ----------------
+
+  @Test
+  void readingAGameByIdReturnsIt() {
+    assertThat(gameService.getGameById(game.getId()).title()).isEqualTo("Minecraft");
+  }
+
+  @Test
+  void readingUnknownGameIsNotFound() {
+    assertThatThrownBy(() -> gameService.getGameById(UUID.randomUUID()))
+        .isInstanceOf(ResponseStatusException.class)
+        .satisfies(e -> assertThat(((ResponseStatusException) e).getStatusCode().value())
+            .isEqualTo(404));
+  }
+
+  @Test
+  void listingGamesIsPagedNotTheWholeTable() {
+    gameService.createGame(new NewGameRequest("Tetris", "blocks", "Someone"));
+
+    var page = gameService.getAllGames(org.springframework.data.domain.PageRequest.of(0, 1));
+    assertThat(page.content()).hasSize(1);
+    assertThat(page.totalElements()).isEqualTo(2);
+  }
+
+  // ---------------- updating games ----------------
+
+  @Test
+  void updatingAGameChangesItsFields() {
+    var updated = gameService.updateGame(game.getId(),
+        new UpdateGameRequest("Minecraft Deluxe", "better blocks", "Mojang Studios"));
+
+    assertThat(updated.id()).isEqualTo(game.getId());
+    assertThat(updated.title()).isEqualTo("Minecraft Deluxe");
+    assertThat(updated.description()).isEqualTo("better blocks");
+    assertThat(updated.company()).isEqualTo("Mojang Studios");
+  }
+
+  @Test
+  void updatingAGameEditsItInPlaceRatherThanAddingARow() {
+    gameService.updateGame(game.getId(),
+        new UpdateGameRequest("Minecraft Deluxe", "blocks", "Mojang"));
+
+    assertThat(gameRepository.findAll()).hasSize(1);
+    assertThat(gameRepository.findById(game.getId()).orElseThrow().getTitle())
+        .isEqualTo("Minecraft Deluxe");
+  }
+
+  @Test
+  void updatingAGameToItsOwnTitleIsAllowed() {
+    // the duplicate check has to exclude the row being edited, otherwise every update
+    // would look like a clash with the game itself
+    assertThat(gameService
+        .updateGame(game.getId(), new UpdateGameRequest("Minecraft", "blocks", "Mojang"))
+        .title()).isEqualTo("Minecraft");
+  }
+
+  @Test
+  void updatingAGameToAnotherGamesTitleIsRejected() {
+    gameService.createGame(new NewGameRequest("Tetris", "blocks", "Someone"));
+
+    assertThatThrownBy(() -> gameService.updateGame(game.getId(),
+        new UpdateGameRequest("Tetris", "blocks", "Mojang")))
+        .isInstanceOf(ResponseStatusException.class)
+        .satisfies(e -> assertThat(((ResponseStatusException) e).getStatusCode().value())
+            .isEqualTo(409));
+
+    // refused, so the original title survived
+    assertThat(gameRepository.findById(game.getId()).orElseThrow().getTitle())
+        .isEqualTo("Minecraft");
+  }
+
+  @Test
+  void updatingUnknownGameIsNotFound() {
+    assertThatThrownBy(() -> gameService.updateGame(UUID.randomUUID(),
+        new UpdateGameRequest("Tetris", "blocks", "Someone")))
+        .isInstanceOf(ResponseStatusException.class)
+        .satisfies(e -> assertThat(((ResponseStatusException) e).getStatusCode().value())
+            .isEqualTo(404));
+  }
+
+  @Test
+  void updatingCanClearTheDescription() {
+    // PUT replaces rather than merges, so an explicit null really does remove the text
+    var updated = gameService.updateGame(game.getId(),
+        new UpdateGameRequest("Minecraft", null, "Mojang"));
+    assertThat(updated.description()).isNull();
+  }
+
+  // ---------------- deleting games ----------------
+
+  @Test
+  void deletingAGameRemovesIt() {
+    gameService.deleteGame(game.getId());
+
+    assertThat(gameRepository.findById(game.getId())).isEmpty();
+    assertThat(gameRepository.findAll()).isEmpty();
+  }
+
+  @Test
+  void deletingAGameThatIsStillPartOfATierIsRejected() {
+    subscriptionGameService.addGame(new NewSubscriptionGameRequest(tier.getId(), game.getId()));
+
+    assertThatThrownBy(() -> gameService.deleteGame(game.getId()))
+        .isInstanceOf(ResponseStatusException.class)
+        .satisfies(e -> assertThat(((ResponseStatusException) e).getStatusCode().value())
+            .isEqualTo(409));
+
+    // refused, so neither the game nor the tier entry is touched
+    assertThat(gameRepository.findById(game.getId())).isPresent();
+    assertThat(subscriptionGameRepository.findBySubscriptionIdAndGameId(tier.getId(),
+        game.getId())).isPresent();
+  }
+
+  @Test
+  void deletingIsAllowedOnceTheGameIsOffEveryTier() {
+    subscriptionGameService.addGame(new NewSubscriptionGameRequest(tier.getId(), game.getId()));
+
+    // off the tiers first, which is exactly what the conflict message asks for
+    subscriptionGameRepository.deleteAll();
+    gameService.deleteGame(game.getId());
+
+    assertThat(gameRepository.findById(game.getId())).isEmpty();
+  }
+
+  @Test
+  void deletingUnknownGameIsNotFound() {
+    assertThatThrownBy(() -> gameService.deleteGame(UUID.randomUUID()))
+        .isInstanceOf(ResponseStatusException.class)
+        .satisfies(e -> assertThat(((ResponseStatusException) e).getStatusCode().value())
+            .isEqualTo(404));
   }
 
   // ---------------- payment status transitions ----------------

@@ -76,6 +76,10 @@ public class SecurityConfig {
 
         // ---- admin only ----
         .requestMatchers(HttpMethod.POST, "/game").hasRole("ADMIN")
+        // Editing and deleting a game changes what every paying customer can access,
+        // so it sits with creation rather than with the read routes below.
+        .requestMatchers(HttpMethod.PUT, "/game/*").hasRole("ADMIN")
+        .requestMatchers(HttpMethod.DELETE, "/game/*").hasRole("ADMIN")
         .requestMatchers(HttpMethod.POST, "/subscription").hasRole("ADMIN")
         .requestMatchers(HttpMethod.POST, "/subscription-game").hasRole("ADMIN")
         .requestMatchers(HttpMethod.PATCH, "/payment/*/status").hasRole("ADMIN")
